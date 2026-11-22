@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/core", "apps/tv"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+# Symbols kept: the TV package checks the binary's floats with them, then
+# strips it (tools/webos/floats.py).
+strip = false

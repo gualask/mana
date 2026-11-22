@@ -1,0 +1,61 @@
+# Neutral comparison fixture; all operations still require a future runtime.
+"schema_version" = 1
+"id" = "resolver-demo"
+"name" = "Synthetic JSON resolver contract"
+"enabled" = false
+
+["catalogue"]
+"kind" = "json"
+"items_pointer" = ""
+
+["catalogue"."request"]
+"url" = "http://127.0.0.1:8781/catalogue.json"
+"method" = "GET"
+
+["catalogue"."fields"]
+"id" = "/id"
+"title" = "/title"
+
+["resolution"]
+"kind" = "host_dispatch"
+"max_depth" = 3
+"on_unknown" = "unsupported_host"
+
+[["resolution"."rules"]]
+"hosts" = ["127.0.0.1"]
+
+["resolution"."rules"."operation"]
+"kind" = "json_api"
+"items_pointer" = "/links"
+"url_pointer" = "/playUrl"
+"id_pointer" = "/id"
+
+["resolution"."rules"."operation"."request"]
+"url" = "http://127.0.0.1:8782/api/links/demo"
+"method" = "GET"
+
+["http"]
+"timeout_seconds" = 15
+"max_redirects" = 3
+"cookie_scope" = "per_source_and_domain"
+"cross_origin_credentials" = "never_automatic"
+
+["http"."headers_by_role"]
+
+["http"."headers_by_role"."catalogue"]
+"User-Agent" = "StreamLab/1"
+
+["http"."headers_by_role"."resolver"]
+"User-Agent" = "StreamLab/1"
+
+["lifecycle"]
+"resolve_on_play" = true
+"expiry" = "unknown"
+"max_network_retries" = 2
+"respect_retry_after" = true
+"max_refresh_attempts" = 0
+
+["playback"]
+"allowed_formats" = ["hls"]
+"detect_from_body" = true
+"require_device_capability_check" = true

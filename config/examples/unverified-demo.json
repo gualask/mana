@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "unverified-demo",
+  "name": "Synthetic catalogue with unresolved playback",
+  "enabled": false,
+  "catalogue": {
+    "kind": "json",
+    "request": {
+      "url": "http://127.0.0.1:8781/catalogue.json",
+      "method": "GET"
+    },
+    "items_pointer": "",
+    "fields": {
+      "id": "/id",
+      "title": "/title"
+    }
+  },
+  "resolution": {
+    "kind": "unverified",
+    "reason": "Synthetic example; resolution not implemented"
+  },
+  "http": {
+    "timeout_seconds": 15,
+    "max_redirects": 3,
+    "headers_by_role": {
+      "catalogue": {
+        "User-Agent": "StreamLab/1"
+      },
+      "resolver": {
+        "User-Agent": "StreamLab/1"
+      }
+    },
+    "cookie_scope": "per_source_and_domain",
+    "cross_origin_credentials": "never_automatic"
+  },
+  "lifecycle": {
+    "resolve_on_play": true,
+    "expiry": "unknown",
+    "max_network_retries": 2,
+    "respect_retry_after": true,
+    "max_refresh_attempts": 0
+  },
+  "playback": {
+    "allowed_formats": [
+      "hls"
+    ],
+    "detect_from_body": true,
+    "require_device_capability_check": true
+  }
+}

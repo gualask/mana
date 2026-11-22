@@ -1,0 +1,24 @@
+[package]
+name = "mana-tv"
+version = "0.1.0"
+description = "Mana for LG webOS TVs"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The IPK, the manifest's `main` and the /tmp/mana* files keep this name.
+[[bin]]
+name = "mana"
+path = "src/main.rs"
+
+[dependencies]
+mana-core = { path = "../../crates/core" }
+fontdue = "0.9.5"
+glow = "0.18.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+libloading = "0.9.1"
+qrcodegen = "1.8.0"
+url = "2"
+
+[build-dependencies]
+cc = "1.11.2"

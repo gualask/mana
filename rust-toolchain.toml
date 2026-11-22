@@ -1,0 +1,6 @@
+# The Rust that builds Mana, on the desktop and for the TV. A new version is
+# adopted by changing it here once the package's checks pass with it
+# (tools/webos/package.py) and the app plays on the TV.
+[toolchain]
+channel = "1.100.0"
+targets = ["armv7-unknown-linux-gnueabi"]

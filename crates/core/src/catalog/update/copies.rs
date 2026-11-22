@@ -1,0 +1,205 @@
+//! The copies of the list in the data directory: the list and the URL it
+//! came from, each M3U list it includes, and the URL chosen; and the
+//! download that writes them.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use url::Url;
+
+use super::{Job, Outcome, Update, list_url};
+use crate::catalog::device::Device;
+use crate::catalog::list::{self, Entry, List};
+use crate::catalog::{Channel, m3u};
+use crate::log::log;
+use crate::net::{Client, loggable};
+
+/// The largest list or included M3U list read, as for HLS playlists.
+const MAX_BYTES: u64 = 4 * 1024 * 1024;
+/// The folder of the copies, in the data directory.
+const COPIES: &str = "lista";
+/// The list's copy, and the URL it came from.
+const LIST_COPY: &str = "lista.toml";
+const LIST_URL: &str = "lista.url";
+/// The URL chosen, kept across power-offs.
+const CHOSEN_URL: &str = "scelta.url";
+/// Unavailable channels named in the log, before only counting them.
+const LOGGED_UNAVAILABLE: usize = 10;
+
+/// The copies in their folder, and the device identifier for the recipes.
+pub(super) struct Copies {
+    dir: PathBuf,
+    device: Arc<Device>,
+}
+
+impl Copies {
+    /// The copies kept in `dir`, the data directory, which also keeps the
+    /// device identifier.
+    pub(super) fn new(dir: &Path) -> Self {
+        Self { dir: dir.join(COPIES), device: Arc::new(Device::new(dir.to_path_buf())) }
+    }
+
+    /// The download `job` asks for; the URL chosen is saved, after the
+    /// copies, only when the list is TOML.
+    pub(super) fn run(&self, job: &Job) -> Update {
+        let outcome = match self.download(&job.url) {
+            Outcome::Channels { channels, kept } if job.chosen => {
+                let kept = self.save(CHOSEN_URL, job.url.as_str()) && kept;
+                log!("lista scelta: {}", loggable(&job.url));
+                Outcome::Channels { channels, kept }
+            }
+            outcome => outcome,
+        };
+        Update { ticket: job.ticket, url: job.url.clone(), outcome }
+    }
+
+    /// The URL chosen last, if any.
+    pub(super) fn chosen(&self) -> Option<Url> {
+        let text = std::fs::read_to_string(self.dir.join(CHOSEN_URL)).ok()?;
+        list_url(&text).inspect_err(|e| log!("lista scelta non valida: {e}")).ok()
+    }
+
+    /// The channels of the list saved, when it came from `url` or no URL is
+    /// asked for, with its inclusions from their copies.
+    pub(super) fn saved(&self, url: Option<&Url>) -> Option<Vec<Channel>> {
+        let from = std::fs::read_to_string(self.dir.join(LIST_URL)).ok()?;
+        if url.is_some_and(|url| url.as_str() != from.trim()) {
+            return None;
+        }
+        let text = std::fs::read_to_string(self.dir.join(LIST_COPY)).ok()?;
+        let list = self.parse(&text).inspect_err(|e| log!("lista salvata non valida: {e}")).ok()?;
+        let channels = self.assemble(list, |url| self.copy_of(url));
+        log!("lista salvata: {} canali", channels.len());
+        Some(channels)
+    }
+
+    /// The list at `url`, with its inclusions, saved when it is TOML.
+    fn download(&self, url: &Url) -> Outcome {
+        let (client, text, list) = match self.fetch_list(url) {
+            Ok(fetched) => fetched,
+            Err(reason) => {
+                log!("lista da {} non aggiornata: {reason}", loggable(url));
+                return Outcome::Failed(reason);
+            }
+        };
+        let kept = self.save(LIST_COPY, &text) && self.save(LIST_URL, url.as_str());
+        let included: Vec<String> = list.entries.iter().filter_map(include_url).map(copy_name).collect();
+        let channels = self.assemble(list, |included| self.download_included(&client, included));
+        self.forget_others(&included);
+        log!("lista da {} aggiornata: {} canali", loggable(url), channels.len());
+        Outcome::Channels { channels, kept }
+    }
+
+    /// The client, the text at `url` and its list, when the text is TOML.
+    fn fetch_list(&self, url: &Url) -> Result<(Client, String, List), String> {
+        let client = Client::new()?;
+        let text = fetch(&client, url)?;
+        let list = self.parse(&text).map_err(|e| format!("non è TOML valido: {e}"))?;
+        Ok((client, text, list))
+    }
+
+    /// The M3U list at `url`, saved, when it has channels; else its saved
+    /// copy, if any.
+    fn download_included(&self, client: &Client, url: &Url) -> Option<String> {
+        match fetch(client, url) {
+            Ok(text) if !m3u::parse(&text).is_empty() => {
+                self.save(&copy_name(url), &text);
+                Some(text)
+            }
+            outcome => {
+                let reason = outcome.err().unwrap_or_else(|| "nessun canale".into());
+                log!("lista inclusa {} non scaricata: {reason}", loggable(url));
+                self.copy_of(url).inspect(|_| log!("lista inclusa {} dalla copia salvata", loggable(url)))
+            }
+        }
+    }
+
+    fn parse(&self, text: &str) -> Result<List, String> {
+        let device = self.device.clone();
+        list::parse(text, move || device.id().map(str::to_string))
+    }
+
+    /// The list's channels, each inclusion replaced by the channels of the
+    /// M3U `included` gives for it; one it gives none for is left out. Logs
+    /// what was left out and the channels that cannot be played.
+    fn assemble(&self, list: List, included: impl Fn(&Url) -> Option<String>) -> Vec<Channel> {
+        let mut skipped = list.skipped;
+        let channels: Vec<Channel> = list
+            .entries
+            .into_iter()
+            .flat_map(|entry| match entry {
+                Entry::Channel(channel) => vec![channel],
+                Entry::Include(url) => included(&url).map(|text| m3u::parse(&text)).unwrap_or_else(|| {
+                    skipped.push(format!("lista inclusa {} saltata", loggable(&url)));
+                    Vec::new()
+                }),
+            })
+            .collect();
+        log_left_out(&skipped, &channels);
+        channels
+    }
+
+    /// The saved copy of the M3U list at `url`.
+    fn copy_of(&self, url: &Url) -> Option<String> {
+        std::fs::read_to_string(self.dir.join(copy_name(url))).ok()
+    }
+
+    /// Writes the copy `name` whole, through a temporary file: a power-off
+    /// meanwhile leaves the previous one. Returns whether it was written.
+    fn save(&self, name: &str, text: &str) -> bool {
+        let (path, temporary) = (self.dir.join(name), self.dir.join(format!("{name}.nuovo")));
+        let saved = std::fs::create_dir_all(&self.dir)
+            .and_then(|()| std::fs::write(&temporary, text))
+            .and_then(|()| std::fs::rename(&temporary, &path));
+        if let Err(error) = &saved {
+            log!("copia {} non salvata: {error}", path.display());
+        }
+        saved.is_ok()
+    }
+
+    /// Removes the copies of M3U lists no longer included.
+    fn forget_others(&self, included: &[String]) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return };
+        for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if name.ends_with(".m3u") && !included.contains(&name) {
+                drop(std::fs::remove_file(&path));
+            }
+        }
+    }
+}
+
+/// Logs what the list left out, and the channels that cannot be played.
+fn log_left_out(skipped: &[String], channels: &[Channel]) {
+    skipped.iter().for_each(|reason| log!("lista: {reason}"));
+    let unavailable: Vec<&Channel> = channels.iter().filter(|c| c.play.is_err()).collect();
+    for channel in unavailable.iter().take(LOGGED_UNAVAILABLE) {
+        log!("lista: {} non disponibile: {}", channel.name, channel.play.as_ref().err().map_or("", String::as_str));
+    }
+    if unavailable.len() > LOGGED_UNAVAILABLE {
+        log!("lista: altri {} canali non disponibili", unavailable.len() - LOGGED_UNAVAILABLE);
+    }
+}
+
+/// The URL of an inclusion.
+fn include_url(entry: &Entry) -> Option<&Url> {
+    match entry {
+        Entry::Include(url) => Some(url),
+        Entry::Channel(_) => None,
+    }
+}
+
+/// The file name of the copy of the M3U list at `url`: a hash of the URL
+/// (FNV-1a), which may be too long for a name.
+fn copy_name(url: &Url) -> String {
+    let hash = url.as_str().bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, b| {
+        (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}.m3u")
+}
+
+/// The text at `url`, of at most MAX_BYTES.
+fn fetch(client: &Client, url: &Url) -> Result<String, String> {
+    let body = client.get(url, MAX_BYTES).map_err(|e| e.to_string())?;
+    String::from_utf8(body).map_err(|_| "non è testo UTF-8".into())
+}

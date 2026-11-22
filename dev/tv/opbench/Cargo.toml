@@ -1,0 +1,18 @@
+# Per-operation costs run on the TV by dev/tv/opbench.py; not part of the app.
+[package]
+name = "mana-opbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The app's segment decryption (crates/core/src/live/hls/decrypt.rs) needs them.
+[dependencies]
+aes = "=0.8.4"
+cbc = "=0.1.2"
+
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

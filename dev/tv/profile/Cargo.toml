@@ -1,0 +1,15 @@
+# Sampling profiler run on the TV by dev/tv/profile.py; not part of the app.
+[package]
+name = "mana-sampler"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "mana-sampler"
+path = "src/main.rs"

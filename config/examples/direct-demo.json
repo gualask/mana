@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "direct-demo",
+  "name": "Direct stream — synthetic configuration example",
+  "enabled": false,
+  "catalogue": {
+    "kind": "direct",
+    "entries": [
+      {
+        "id": "demo",
+        "title": "Replace with an actual media URL",
+        "url": "https://media.example.invalid/live/index.m3u8"
+      }
+    ]
+  },
+  "resolution": {
+    "kind": "direct"
+  },
+  "http": {
+    "timeout_seconds": 15,
+    "max_redirects": 3,
+    "headers_by_role": {
+      "catalogue": {
+        "User-Agent": "Mozilla/5.0"
+      },
+      "resolver": {
+        "User-Agent": "Mozilla/5.0"
+      }
+    },
+    "cookie_scope": "per_source_and_domain",
+    "cross_origin_credentials": "never_automatic"
+  },
+  "lifecycle": {
+    "resolve_on_play": true,
+    "expiry": "unknown",
+    "max_network_retries": 2,
+    "respect_retry_after": true,
+    "max_refresh_attempts": 0
+  },
+  "playback": {
+    "allowed_formats": [
+      "hls",
+      "dash",
+      "progressive"
+    ],
+    "detect_from_body": true,
+    "require_device_capability_check": true
+  }
+}
