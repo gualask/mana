@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::Program;
 use super::stats::{Failure, Shared};
-use crate::live::hls::{self, Live};
+use crate::live::hls::{self, Live, Patience};
 use crate::live::playable::{self, Playable};
 use crate::live::{Cause, Interruption, QualityChoice, Stall};
 use crate::log::log;
@@ -29,14 +29,16 @@ use crate::source::run::{Candidate, Engine, MAX_ANSWER_BYTES, Outcome, Request, 
 /// about two minutes, an occasional one is always recovered.
 pub const MAX_REOPENINGS: usize = 6;
 const REOPEN_WINDOW: Duration = Duration::from_secs(300);
-/// Network failures, one second apart, that open a candidate the viewer
-/// chose among several before playback ends, so that they can choose
-/// another: an unreachable host must not hold the screen. As Media3's
-/// playlists (3 retries); hls.js gives up a manifest after 1 retry, FFmpeg's
-/// hls.c does not retry it. With nothing else to choose, as for a stream
-/// the list gives, opening goes on until the network is back, as a TV
-/// tunes in again.
-const CANDIDATE_ATTEMPTS: u32 = 3;
+/// How long opening a candidate the viewer chose among several insists
+/// before playback ends, so that they can choose another: an unreachable
+/// host must not hold the screen. 3 network failures one second apart, as
+/// Media3's playlists (3 retries; hls.js gives up a manifest after 1 retry,
+/// FFmpeg's hls.c does not retry it), or 10 s from the first attempt, the
+/// time to first byte hls.js allows a manifest: a server that never answers
+/// costs one read timeout, not three. With nothing else to choose, as for a
+/// stream the list gives, opening goes on until the network is back, as a
+/// TV tunes in again.
+const CANDIDATE_PATIENCE: Patience = Patience { attempts: 3, within: Duration::from_secs(10) };
 
 /// What to do once an opening of a live stream ended.
 #[derive(Debug, PartialEq)]
@@ -158,9 +160,9 @@ fn play_source(
     };
     log!("candidate {id} resolved: {}", net::loggable(&resolved.url));
     // A candidate chosen among several gives way to the viewer's choice.
-    let attempts = selection.candidate.is_some().then_some(CANDIDATE_ATTEMPTS);
+    let patience = selection.candidate.is_some().then_some(CANDIDATE_PATIENCE);
     let mut renew = || renewed(&mut engine, &candidate, item);
-    play_stream(playable(resolved), &mut renew, attempts, settings, open, stop, shared, quality)
+    play_stream(playable(resolved), &mut renew, patience, settings, open, stop, shared, quality)
 }
 
 /// An engine for `selection`'s source, on `client`, given up once `stop`.
@@ -182,11 +184,11 @@ fn playable(resolved: Resolved) -> Playable {
 
 /// Opens the live `playable` again and again, as `charge` allows, until it
 /// ends or the viewing stops; `renew` gives it anew when its token is
-/// refused; each opening fails after `attempts` network failures, if given.
+/// refused; each opening gives up within `patience`, if given.
 fn play_stream(
     playable: Playable,
     renew: &mut dyn FnMut() -> Result<Playable, Failure>,
-    attempts: Option<u32>,
+    patience: Option<Patience>,
     settings: &Settings,
     open: &OpenBackend,
     stop: &Arc<AtomicBool>,
@@ -195,7 +197,7 @@ fn play_stream(
 ) -> Result<(), Failure> {
     let mut budget = Budget::default();
     let mut playable = playable;
-    let mut live = resolve(&mut playable, renew, attempts, stop, shared, quality, &mut budget)?;
+    let mut live = resolve(&mut playable, renew, patience, stop, shared, quality, &mut budget)?;
     while let Some(opened) = &live {
         let stream_stop = hls::Stop::new(stop);
         let ended = play_live(opened, &stream_stop, open, settings, stop, &shared.playback);
@@ -210,7 +212,7 @@ fn play_stream(
             Next::Reopen(_) => {}
             Next::Resolve(_) => {
                 playable = renew()?;
-                live = resolve(&mut playable, renew, attempts, stop, shared, quality, &mut budget)?;
+                live = resolve(&mut playable, renew, patience, stop, shared, quality, &mut budget)?;
             }
         }
     }
@@ -223,14 +225,14 @@ fn play_stream(
 fn resolve(
     playable: &mut Playable,
     renew: &mut dyn FnMut() -> Result<Playable, Failure>,
-    attempts: Option<u32>,
+    patience: Option<Patience>,
     stop: &Arc<AtomicBool>,
     shared: &Shared,
     quality: &QualityChoice,
     budget: &mut Budget,
 ) -> Result<Option<Live>, Failure> {
     loop {
-        let cause = match Live::resolve(playable, &hls::Stop::resolving(stop), shared.live.clone(), quality, attempts) {
+        let cause = match Live::resolve(playable, &hls::Stop::resolving(stop), shared.live.clone(), quality, patience) {
             Ok(live) => return Ok(live),
             Err(Interruption::Refused(cause)) => cause,
             Err(other) => return Err(Failure::Live(other)),

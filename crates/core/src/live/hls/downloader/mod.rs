@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use url::Url;
 
+use super::download::Patience;
 use super::ladder::Ladder;
 use super::playlist::{MediaPlaylist, Segment, text};
 use super::progress::{Progress, reload_wait, stuck};
@@ -26,7 +27,7 @@ mod failure;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 /// Attempts on one segment before it is skipped; playlists are retried for
 /// as long as playback lasts, as a TV keeps trying a lost channel.
-const SEGMENT_ATTEMPTS: u32 = 3;
+const SEGMENT_PATIENCE: Patience = Patience { attempts: 3, within: Duration::MAX };
 
 /// A media playlist and when its download started.
 pub(super) struct Fetched {
@@ -140,7 +141,7 @@ impl Downloader {
             return Ok(Sent::Gone);
         }
         let started = Instant::now();
-        let data = match self.retry(stop, Some(SEGMENT_ATTEMPTS), |d| d.fetch(segment)) {
+        let data = match self.retry(stop, Some(SEGMENT_PATIENCE), |d| d.fetch(segment)) {
             Ok(Some(data)) => data,
             Ok(None) => return Ok(Sent::Gone),
             // Even one this client cannot read: the next may be fine.
@@ -207,10 +208,10 @@ impl Downloader {
     pub(super) fn retry<T>(
         &mut self,
         stop: &Stop,
-        attempts: Option<u32>,
+        patience: Option<Patience>,
         mut attempt: impl FnMut(&mut Self) -> Result<T, Failure>,
     ) -> Result<Option<T>, Failure> {
-        let mut failures = Failures::new(attempts, self.label);
+        let mut failures = Failures::new(patience, self.label);
         loop {
             if stop.is_set() {
                 return Ok(None);

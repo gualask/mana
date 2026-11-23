@@ -11,7 +11,7 @@
 
 use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use url::Url;
 
@@ -58,12 +58,22 @@ enum Media {
     Continuous { url: Url, first: Mutex<Option<Body>> },
 }
 
+/// How long opening a stream insists before giving up: `attempts` network
+/// failures, or failures for `within` since the first attempt, whichever
+/// comes first, so that a server that never answers does not hold the
+/// screen for a read timeout per attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Patience {
+    pub attempts: u32,
+    pub within: Duration,
+}
+
 impl Live {
     /// Tells what the stream's URL serves:
     /// a master playlist, whose variants and audio rendition it chooses,
     /// following the viewer's `choice` of quality, or a continuous stream.
-    /// Blocks until then, retrying network errors, `attempts` times at most
-    /// when given; returns None when stopped meanwhile. A refused token is an interruption of its own:
+    /// Blocks until then, retrying network errors within `patience` when
+    /// given; returns None when stopped meanwhile. A refused token is an interruption of its own:
     /// the session may resolve the stream again. The stream's credentials
     /// go only to the origin of its URL.
     pub fn resolve(
@@ -71,7 +81,7 @@ impl Live {
         stop: &Stop,
         stats: Arc<Mutex<Stats>>,
         choice: &QualityChoice,
-        attempts: Option<u32>,
+        patience: Option<Patience>,
     ) -> Result<Option<Self>, Interruption> {
         let named = [playable.url.clone()];
         let client = Client::for_source(playable.headers.clone(), &named, playable.root_certificate.as_deref())
@@ -79,7 +89,7 @@ impl Live {
         let mut reader = Downloader::new(client.clone(), "stream");
         let master = &playable.url;
         let served = |d: &mut Downloader| served(d.client(), master, choice, &stats);
-        let Some(media) = reader.retry(stop, attempts, served).map_err(interruption)? else {
+        let Some(media) = reader.retry(stop, patience, served).map_err(interruption)? else {
             return Ok(None);
         };
         Ok(Some(Self { client, media }))

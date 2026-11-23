@@ -15,5 +15,5 @@ mod ts;
 
 #[cfg(target_arch = "arm")]
 pub use decrypt::assume_aes_instructions;
-pub use download::Live;
+pub use download::{Live, Patience};
 pub use stream::Stop;

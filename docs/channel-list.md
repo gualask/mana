@@ -102,7 +102,9 @@ Mana does not pass to another candidate by itself: one that does not
 resolve, or whose stream cannot be opened or plays no more, ends playback,
 and the menu opens again with that candidate marked and the reason. Its
 stream gives up after 3 network failures a second apart, as Media3 gives up
-a playlist, so that an unreachable host does not hold the screen; a channel
+a playlist, or 10 s after its first attempt, the time to first byte hls.js
+allows a manifest, so that a host that is unreachable or never answers
+does not hold the screen; a channel
 with a URL, or a source's only candidate, is tried until the network is
 back. A token refused while watching has the same candidate resolved
 again, within the budget of reopenings

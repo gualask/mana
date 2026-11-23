@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use super::super::download::Patience;
 use super::super::playlist;
 use crate::live::Cause;
 use crate::log::log;
@@ -55,27 +56,29 @@ impl Failure {
 /// The consecutive failures of one download.
 pub(super) struct Failures {
     count: u32,
+    /// The first attempt.
+    started: Instant,
     since: Option<Instant>,
-    /// Failures before giving up; None retries for as long as it takes.
-    attempts: Option<u32>,
+    /// When to give up; None retries for as long as it takes.
+    patience: Option<Patience>,
     label: &'static str,
 }
 
 impl Failures {
-    pub(super) fn new(attempts: Option<u32>, label: &'static str) -> Self {
-        Self { count: 0, since: None, attempts, label }
+    pub(super) fn new(patience: Option<Patience>, label: &'static str) -> Self {
+        Self { count: 0, started: Instant::now(), since: None, patience, label }
     }
 
     /// Counts one and logs it, only every tenth past LOGGED_FAILURES; an
-    /// error once there were as many as the attempts allowed.
+    /// error once the patience given is over.
     pub(super) fn count(&mut self, error: Cause) -> Result<(), Failure> {
         self.count += 1;
         self.since.get_or_insert_with(Instant::now);
         if self.count <= LOGGED_FAILURES || self.count.is_multiple_of(10) {
             log!("{}: {error} (attempt {})", self.label, self.count);
         }
-        match self.attempts {
-            Some(max) if self.count >= max => Err(Failure::Transient(error)),
+        match self.patience {
+            Some(p) if self.count >= p.attempts || self.started.elapsed() >= p.within => Err(Failure::Transient(error)),
             _ => Ok(()),
         }
     }
@@ -85,5 +88,27 @@ impl Failures {
         if let Some(since) = self.since {
             log!("{}: reachable again after {} s", self.label, since.elapsed().as_secs());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn cause() -> Cause {
+        Cause::Network(net::Error::with_status(&url::Url::parse("http://a.invalid/x").unwrap(), 503))
+    }
+
+    #[test]
+    fn patience_ends_at_its_attempts_or_its_time_whichever_comes_first() {
+        let mut failures = Failures::new(Some(Patience { attempts: 3, within: Duration::MAX }), "test");
+        assert!(failures.count(cause()).is_ok() && failures.count(cause()).is_ok());
+        assert!(failures.count(cause()).is_err(), "third failure");
+        let mut failures = Failures::new(Some(Patience { attempts: 3, within: Duration::ZERO }), "test");
+        assert!(failures.count(cause()).is_err(), "time over at the first failure");
+        let mut failures = Failures::new(None, "test");
+        assert!((0..20).all(|_| failures.count(cause()).is_ok()), "without patience, for as long as it takes");
     }
 }
