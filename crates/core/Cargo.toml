@@ -8,10 +8,14 @@ publish.workspace = true
 
 [dependencies]
 aes = "0.8"
+aes-gcm = "0.10"
+base64 = "0.22"
 cbc = "0.1"
+ctr = "0.9"
 fluent-bundle = "0.16"
 getrandom = "0.2"
 lol_html = "3.0.3"
+md-5 = "0.10"
 regex = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"

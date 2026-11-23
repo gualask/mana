@@ -7,9 +7,9 @@ inputs, resolvers and protocols must have distinct extension points.
 
 This document defines the structure, the contracts and the responsibilities.
 The workspace contains the shared library `mana-core` and the [TV
-app](tv-app.md). **Source files are read and checked, but nothing runs
-them yet**: live streams use the provisional recipe of the `.stream` files
-and of the channel list. The source file is defined in [Configuration and
+app](tv-app.md). **Source files are read, checked and run by the core, but
+the apps do not use them yet**: live streams use the provisional recipe of
+the `.stream` files and of the channel list. The source file is defined in [Configuration and
 extensions](configuration.md), with what is still to be built.
 
 ## Requirements and evidence
@@ -105,7 +105,7 @@ The split of the recipes and a synthetic example are described in the
 |---|---|---|
 | `session` | The current viewing, one at a time; reopening and new resolution with their limit; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
 | `live` | The stream to play (`Playable`: a `.stream` file or a channel's URL), provisional recipe, HLS client; reports interruptions without deciding | Stream protocols and formats |
-| `source` | Source files: their contract, the vocabulary of their steps and the checks before use; later the engine that runs them | Providers, written as data |
+| `source` | Source files: their contract, the vocabulary of their steps and the checks before use; the engine that runs them, with its limits and outcomes, the network given by the caller | Providers, written as data |
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |
 | `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; device identifier | List formats and their lifecycle |
 | `net` | TLS and roots, timeouts, User-Agent, responses rejected beyond the limit set by the reader (playlists, keys and segments in `live::hls`), URLs without tokens in the log; headers and CA of the single source, with credentials sent only to the origins the source names; maximum length of a value in a request line (`MAX_LINE_VALUE`), for URLs and headers | HTTP transport |
@@ -139,7 +139,7 @@ apps → playback (Backend port), catalog, net
 catalog → live (source, recipe), net
 apps, catalog, live, net, playback, session, source → language
 apps, catalog, language, live, playback, session → log
-live → net
+live, source → net
 live, playback → adts
 ```
 
@@ -172,7 +172,7 @@ crates/core/                # mana-core: no UI and no platform dependency
     session/                # viewing, reopening (reopen.rs), viewing state and merged statistics (stats.rs)
     live/                   # playable.rs (a stream to play), recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
-    source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs), checks (validate.rs)
+    source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs), checks (validate.rs), engine (run/: flows and limits, values and templates, operations)
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
     net.rs, log.rs, adts.rs

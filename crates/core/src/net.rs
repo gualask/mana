@@ -81,6 +81,22 @@ impl Error {
     pub fn empty(url: &Url) -> Self {
         Self { kind: Kind::Empty, path: loggable_path(url) }
     }
+
+    /// An answer from `url` with the status `code`, for the tests of what
+    /// reads answers.
+    #[cfg(test)]
+    pub(crate) fn with_status(url: &Url, code: u16) -> Self {
+        Self { kind: Kind::Status(code), path: loggable_path(url) }
+    }
+}
+
+/// What a request made with `send` brought back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Answer {
+    /// The URL that served it, after redirects.
+    pub url: Url,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
 }
 
 impl Localized for Error {
@@ -166,13 +182,40 @@ impl Client {
         self.request(url, None)
     }
 
+    /// A request as a source file writes it: `method` (GET or POST), its
+    /// own `headers` on top of the client's, `body` if any; the answer's
+    /// headers and its body, of at most `limit` bytes.
+    pub fn send(&self, method: &str, url: &Url, headers: &[(String, String)], body: Option<&[u8]>, limit: u64) -> Result<Answer, Error> {
+        let mut request = self.prepare(method, url, None);
+        for (name, value) in headers {
+            request = request.set(name, value);
+        }
+        let response = match body {
+            Some(body) => request.send_bytes(body),
+            None => request.call(),
+        };
+        let response = response.map_err(|e| request_error(url, e))?;
+        let served = Url::parse(response.get_url()).unwrap_or_else(|_| url.clone());
+        let names = response.headers_names();
+        let headers = names.iter().filter_map(|name| Some((name.clone(), response.header(name)?.to_string()))).collect();
+        Ok(Answer { url: served, headers, body: read_rest(url, response.into_reader(), limit)? })
+    }
+
     fn fetch(&self, url: &Url, limit: u64, within: Option<Duration>) -> Result<(Url, Vec<u8>), Error> {
         let (served, body) = self.request(url, within)?;
         Ok((served, read_rest(url, body, limit)?))
     }
 
     fn request(&self, url: &Url, within: Option<Duration>) -> Result<(Url, Box<dyn Read + Send>), Error> {
-        let mut request = self.agent.request_url("GET", url);
+        let response = self.prepare("GET", url, within).call().map_err(|e| request_error(url, e))?;
+        let served = Url::parse(response.get_url()).unwrap_or_else(|_| url.clone());
+        Ok((served, response.into_reader()))
+    }
+
+    /// A request with the client's headers, those with credentials only
+    /// to the origins its source names.
+    fn prepare(&self, method: &str, url: &Url, within: Option<Duration>) -> ureq::Request {
+        let mut request = self.agent.request_url(method, url);
         if let Some(within) = within {
             request = request.timeout(within);
         }
@@ -182,9 +225,7 @@ impl Client {
                 request = request.set(name, value);
             }
         }
-        let response = request.call().map_err(|e| request_error(url, e))?;
-        let served = Url::parse(response.get_url()).unwrap_or_else(|_| url.clone());
-        Ok((served, response.into_reader()))
+        request
     }
 }
 

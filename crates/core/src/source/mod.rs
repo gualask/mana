@@ -15,6 +15,7 @@ use crate::language::{Language, Localized, display_in_english};
 use crate::text;
 
 mod operation;
+pub mod run;
 mod validate;
 
 pub use operation::{Alphabet, Field, Headers, Kind, Mapping, Method, Mode, Operation};

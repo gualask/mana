@@ -7,10 +7,11 @@ It contains no recordings of broadcasts and no responses copied from
 providers. The scenarios are defined by protocol and behaviour.
 
 **Status:** lab implemented, with sixteen
-contract/integration tests. Mana reads and checks source files but does
-not run them yet ([Configuration and extensions](configuration.md#not-built-yet)),
-so these tests do not prove that it runs them; the lab's chains are written
-as source files in [`config/examples/`](../config/examples/). The media server can already be
+contract/integration tests. The lab's chains are written as source files
+in [`config/examples/`](../config/examples/), which Mana's engine runs in
+`cargo test` against a network that answers as the lab does
+([run/tests.rs](../crates/core/src/source/run/tests.rs)); the apps do not
+use sources yet ([Configuration and extensions](configuration.md#not-built-yet)). The media server can already be
 attached to an HLS player to verify transport and decoding.
 
 ## Start and playback

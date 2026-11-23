@@ -88,6 +88,15 @@ source-bad-selector = { $at }: invalid selector: { $detail }
 source-wrong-output-list = { $at }: the last step does not give a list
 source-wrong-output-resolution = { $at }: the last step is not `stream`, `next` or `call`
 
+source-network-error = { $at }: network error
+source-access-denied = { $at }: access denied
+source-rate-limited = { $at }: too many requests, the server asks to wait
+source-changed = { $at }: the answers no longer fit the source
+source-unsupported-host = { $at }: no route for this address
+source-no-sources = { $at }: no streams for now
+source-limit = { $at }: limit reached
+source-cancelled = { $at }: cancelled
+
 ## Live streams
 
 live-unsupported = unsupported: { $cause }

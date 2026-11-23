@@ -4,9 +4,10 @@ The requirement, linked to the [Modular architecture](architecture.md), is
 to keep in the source files everything that can be composed from
 capabilities already available. **A new provider must not, by default, mean
 a new Rust module.** This document defines the source file: what belongs in
-it, its contract, and what is not built yet. The contract is read and
-checked by [`source/`](../crates/core/src/source/mod.rs); nothing runs its
-steps yet ([Not built yet](#not-built-yet)).
+it, its contract, how it runs, and what is not built yet. The contract is
+read and checked by [`source/`](../crates/core/src/source/mod.rs) and run
+by [`source/run/`](../crates/core/src/source/run/mod.rs); the apps do not
+use sources yet ([Not built yet](#not-built-yet)).
 
 ## What belongs in the files
 
@@ -153,6 +154,29 @@ rejects, naming the flow and the step:
 The [JSON Schema](../schemas/source.schema.json) describes the structure
 for editors; the rules beyond it are the Rust validation's.
 
+### Running
+
+[`Engine`](../crates/core/src/source/run/mod.rs) runs a checked source:
+`catalogue` gives its items, `sources` the candidates of an item, `resolve`
+the stream a candidate leads to, following the next candidates resolvers
+give. The network comes from the caller, as a function from a request to
+an answer: the apps pass `net::Client::send`, the tests a network that
+answers as the lab does. A run checks before each step whether it was
+cancelled. Each run is bounded, whatever the source asks: 16 requests, 8
+candidates in a chain, recipes 4 deep, 5,000 entries in a list (the
+constants of `run/mod.rs`); the caller reads answers of at most
+`MAX_ANSWER_BYTES`, 4 MB. A run ends on one of the
+outcomes of the [architecture](architecture.md#extensions-and-compatibility),
+with the flow and the step: `network_error`, `access_denied` (401, 403,
+410), `rate_limited` (429), `source_changed` (a field missing, a pattern
+without a match, a decryption that does not authenticate), `unsupported_host`,
+`no_sources`, a limit reached, cancelled. A candidate leading back to
+itself is a limit.
+
+The engine does not check the media: whether the stream plays is the
+player's to say, and trying the next candidate when it does not is the
+session's, not built yet.
+
 ## Composable resolvers
 
 The main flows stay simple, and the branches with their own
@@ -218,12 +242,10 @@ duplicate keys are a TOML error.
 
 ## Not built yet
 
-- The engine that runs the steps, with its limits per resolution (steps,
-  requests, chain and `call` depth, size of a response, items in a list) and
-  the outcomes of the [architecture](architecture.md#extensions-and-compatibility).
 - JSON import into the same `Source`, with the file in the errors.
 - The channel list naming a source (`source = "rai"`) in place of the
-  provisional [recipe steps](channel-list.md#recipe-steps).
+  provisional [recipe steps](channel-list.md#recipe-steps), and the session
+  resolving it and trying the next candidate.
 - Catalogue pagination: no case has needed it.
 
 The order is in [Next steps](todo.md).
