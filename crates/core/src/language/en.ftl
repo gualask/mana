@@ -65,6 +65,29 @@ stream-header = { $file }: header without `Name: value`
 stream-unknown-key = unknown key in { $file }: { $key }
 stream-url-or-recipe = { $file }: needs `url` or a `resolve` recipe, not both
 
+## Source files
+
+source-format-at-line = not valid TOML: line { $line }: { $message }
+source-format = not valid TOML: { $message }
+source-unknown-field = { $at }: unknown field `{ $field }`
+source-missing-field = { $at }: `{ $field }` missing
+source-invalid-value = { $at }: `{ $field }` not valid: { $detail }
+source-unsupported-operation = { $at }: operation `{ $op }` unknown to this version of Mana
+source-one-of = { $at }: exactly one of { $choices } is needed
+source-unknown-reference = { $at }: `{ $reference }` names nothing that comes before it
+source-type-mismatch = { $at }: { $expected } needed, `{ $reference }` gives { $found }
+source-unknown-headers = { $at }: no header set `{ $name }`
+source-unknown-resolver = { $at }: no resolver `{ $name }`
+source-unknown-recipe = { $at }: no recipe `{ $name }`
+source-call-inputs = { $at }: the inputs are not those recipe `{ $recipe }` names
+source-duplicate-id = { $at }: a step `{ $id }` comes earlier
+source-equal-routes = { $at }: an earlier route has the same `when`
+source-call-cycle = recipe `{ $recipe }` calls itself
+source-bad-pattern = { $at }: invalid pattern: { $detail }
+source-bad-selector = { $at }: invalid selector: { $detail }
+source-wrong-output-list = { $at }: the last step does not give a list
+source-wrong-output-resolution = { $at }: the last step is not `stream`, `next` or `call`
+
 ## Live streams
 
 live-unsupported = unsupported: { $cause }

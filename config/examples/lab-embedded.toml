@@ -1,0 +1,151 @@
+# Signals embedded in Next Flight data of an HTML page.
+id = "lab-embedded"
+name = "Lab embedded data"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[headers.media]
+User-Agent = "StreamLab/1"
+Referer = "http://127.0.0.1:8782/"
+X-Lab-Media = "synthetic"
+
+[catalogue]
+items = [{ id = "demo", title = "Embedded demo" }]
+
+[[sources.steps]]
+id = "page"
+op = "http"
+url = "http://127.0.0.1:8781/embedded"
+
+[[sources.steps]]
+id = "rows"
+op = "nextflight"
+from = "{page.text}"
+key = "streams"
+
+[[sources.steps]]
+id = "signals"
+op = "list.map"
+list = "{rows}"
+item = { id = "{item.id}", label = "{item.label}", type = "{item.play_type}", url = "{item.streaming_link}" }
+
+[[resolve.routes]]
+when = { type = "m3u8" }
+use = "stream"
+headers = "media"
+
+[[resolve.routes]]
+when = { host = "127.0.0.1", path = "/wrapper" }
+use = "envelope"
+
+[[resolve.routes]]
+when = { host = "127.0.0.1", path = "/player" }
+use = "live-url"
+
+[[resolvers.envelope.steps]]
+id = "shared"
+op = "call"
+recipe = "envelope"
+input = { url = "{input.candidate.url}", id = "{input.candidate.id}" }
+
+[[resolvers.live-url.steps]]
+id = "media"
+op = "url.param"
+from = "{input.candidate.url}"
+name = "liveUrl"
+
+[[resolvers.live-url.steps]]
+id = "stream"
+op = "stream"
+url = "{media}"
+headers = "media"
+
+[recipes.envelope]
+inputs = ["url", "id"]
+
+# The page holds the AES-256-GCM material as base64url strings in a pool,
+# in the order given by a second array: key XOR mask, mask, IV, data+tag, AAD.
+[[recipes.envelope.steps]]
+id = "page"
+op = "http"
+url = "{input.url}"
+headers = "lab"
+
+[[recipes.envelope.steps]]
+id = "pool_text"
+op = "text.match"
+from = "{page.text}"
+pattern = 'const _0xp=(\[.*?\]),'
+
+[[recipes.envelope.steps]]
+id = "pool"
+op = "json"
+from = "{pool_text}"
+
+[[recipes.envelope.steps]]
+id = "order_text"
+op = "text.match"
+from = "{page.text}"
+pattern = '_0xi=(\[.*?\]);'
+
+[[recipes.envelope.steps]]
+id = "order"
+op = "json"
+from = "{order_text}"
+
+[[recipes.envelope.steps]]
+id = "masked"
+op = "base64.decode"
+from = "{pool.{order.0}}"
+alphabet = "url"
+
+[[recipes.envelope.steps]]
+id = "mask"
+op = "base64.decode"
+from = "{pool.{order.1}}"
+alphabet = "url"
+
+[[recipes.envelope.steps]]
+id = "iv"
+op = "base64.decode"
+from = "{pool.{order.2}}"
+alphabet = "url"
+
+[[recipes.envelope.steps]]
+id = "data"
+op = "base64.decode"
+from = "{pool.{order.3}}"
+alphabet = "url"
+
+[[recipes.envelope.steps]]
+id = "aad"
+op = "base64.decode"
+from = "{pool.{order.4}}"
+alphabet = "url"
+
+[[recipes.envelope.steps]]
+id = "key"
+op = "bytes.xor"
+a = "{masked}"
+b = "{mask}"
+
+[[recipes.envelope.steps]]
+id = "plain"
+op = "aes.decrypt"
+mode = "gcm"
+key = "{key}"
+iv = "{iv}"
+data = "{data}"
+aad = "{aad}"
+
+[[recipes.envelope.steps]]
+id = "target"
+op = "json"
+from = "{plain}"
+
+[[recipes.envelope.steps]]
+id = "next"
+op = "next"
+candidate = { id = "{input.id}", url = "{target.u}" }
+

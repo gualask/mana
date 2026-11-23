@@ -72,9 +72,8 @@ request of the channel ([m3u.rs](../crates/core/src/catalog/m3u.rs)).
 
 ## Recipe steps
 
-A recipe is a provisional form, which the
-[recipe contract](configuration.md#gap-from-the-current-draft) will
-replace. The steps are run on the TV at every opening, each on the result of
+A recipe is a provisional form, which
+[source files](configuration.md#source-files) will replace. The steps are run on the TV at every opening, each on the result of
 the previous one ([recipe.rs](../crates/core/src/live/recipe.rs)):
 
 - `get [URL]`: downloads the URL, or the one produced by the previous step;

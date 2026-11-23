@@ -1,276 +1,229 @@
 # Configuration and extensions
 
-Proposed direction of 15 November 2026, linked to the [Modular architecture](architecture.md).
-The requirement is to keep in the profiles everything that can be composed
-from capabilities already available. **A new provider must not, by default,
-mean a new Rust module.**
-
-The [current schema draft](../schemas/source.schema.json) does not implement
-the language described here yet. This document sets the criteria for
-extending it together with the future engine, without presenting new fields
-as already supported.
+The requirement, linked to the [Modular architecture](architecture.md), is
+to keep in the source files everything that can be composed from
+capabilities already available. **A new provider must not, by default, mean
+a new Rust module.** This document defines the source file: what belongs in
+it, its contract, and what is not built yet. The contract is read and
+checked by [`source/`](../crates/core/src/source/mod.rs); nothing runs its
+steps yet ([Not built yet](#not-built-yet)).
 
 ## What belongs in the files
 
 | Change | Where it is expressed |
 |---|---|
-| Domain, path, GET/POST, query/body, headers | Source profile or shared recipe |
-| JSON fields, HTML selectors, metadata, dates and time zone | Mapping with operations already implemented |
-| Catalogue → detail → nested list of streams | Flows and references between their inputs/outputs |
-| Hosts that follow the same protocol | Host rule → reference to the same recipe/resolver |
-| Extraction of a URL parameter or of a raw portion of the query | Explicit operation with a declared decoding mode |
-| Preference between streams, retry, fallback and renewal | Profile policy executed by the application |
+| Domain, path, GET/POST, query/body, headers | Steps of a source or of a shared recipe |
+| JSON fields, HTML attributes, Next Flight and Protobuf data | Reading operations and `list.map` |
+| Catalogue → detail → nested list of streams | The `catalogue`, `sources` and `resolve` flows |
+| Hosts that follow the same protocol | Routes → the same resolver |
+| Extraction of a URL parameter or of a raw portion of the query | `url.param` or `url.query_after` |
+| Preference between streams, retry, fallback and renewal | The application session, the same for every source |
 | A transformation already available, cryptographic ones included | Parameters and composition of existing operations |
-| Algorithm, parser or transport missing from the engine | New operation or adapter with its own contract |
+| Algorithm, parser or transport missing from the engine | New operation with its own contract |
 | New decoding codec/backend | Media and platform support, with a verified capability |
 
-Before creating an adapter, look for a composition of existing operations.
-If a reusable capability is missing, add a primitive with input/output and a
-parameter schema. Provider-specific code remains for protocols or algorithms
-that cannot be described clearly with that vocabulary. The presence of AES,
-on its own, does not force the whole provider to be coded in Rust.
+Before adding an operation, look for a composition of existing ones. If a
+reusable capability is missing, add a primitive with input/output and
+parameters ([operation.rs](../crates/core/src/source/operation.rs)).
+The presence of AES, on its own, does not force the provider to be coded in
+Rust. No `eval`, shell or arbitrary JavaScript is introduced in the source
+files; an algorithm that requires a complete program belongs in a new
+operation, with its contract and its tests.
 
-The lab offers synthetic encrypted envelopes and binary sessions.
-The [test client's functions](../dev/lab/codecs.py) check the data, but they
-are not yet operations of the future runtime. The vocabulary must be defined
-and validated before profiles are made executable.
+## Source files
 
-## Composable recipes
-
-The source file declares the public operations `catalogue`, `sources` and
-`resolve`; renewal calls a recipe or an explicit adapter. The input and
-output contracts are defined in the [Modular architecture](architecture.md#common-contract).
-
-A recipe contains steps with an ID, operation/version, parameters, explicit
-input and named output. Steps can refer to the flow's inputs and to earlier
-results; the loader rejects missing references, type mismatches and cycles.
-The engine applies common limits to the number of requests, response size,
-pages, candidates and depth.
-
-The initial vocabulary must cover:
-
-- HTTP and reading of JSON, M3U, HTML and Next Flight data;
-- selection of fields and lists, mapping, default values, simple filters and
-  declared string/date transformations;
-- construction of URLs, queries and paths with explicit encoding;
-- choice between cases with limited conditions, such as field present or
-  value equal;
-- calls to shared recipes or registered adapters;
-- production of the normalised models and resolution of subsequent
-  candidates.
-
-These are required capabilities, not names of operations already
-implemented. No `eval`, shell or arbitrary JavaScript is introduced in the
-profiles. The necessary iterations, such as pagination and mapping of items,
-are limited operations of the engine. An algorithm that requires a complete
-program belongs in the extension, with its contract and its tests.
-
-A single host rule chooses the recipe. Conflicts or ambiguous rules are
-loading errors. Common recipes, for example a shared JSON API resolver, are
-referenced by ID and revision from several sources. Parameters and overrides
-are explicit and validated; there is no implicit merging of files or
-arbitrary inheritance. Choosing an unknown host produces an outcome on the
-candidate.
-
-Templates have explicit namespaces and transformations: an ID inserted into
-the path is encoded once only, as a component. The standard extraction of
-`liveUrl` and the raw query after `url=` are two different operations, with
-distinct extraction contracts. No general rule may automatically truncate or
-re-encode a URL that is already signed.
-
-### Composable resolvers
-
-Decided approach: the main flows stay simple, and the branches with their own
-responsibilities call named recipes, which can be shared between providers.
-The [resolution contract](architecture.md#step-by-step-resolution) lets each
-resolver return a media resource or the next link/candidate to resolve. The
-engine continues the chain and applies its limits; the resolver does not need
-to know all the subsequent destinations.
-
-A synthetic source exposes catalogue and details; the envelope resolver
-returns a player URL; a subsequent recipe extracts the `liveUrl` parameter
-and produces the HLS resource. The lab provides this chain, while the recipe
-engine is still to be built.
-
-Example of TOML dispatch, with proposed syntax:
+A source is one TOML file; JSON with the same data gives the same source.
+It has no version: an operation never changes meaning, a new meaning takes
+a new name, and a file using an operation this version of Mana does not
+know is rejected. [`config/examples/`](../config/examples/) holds one
+source for each chain of the [lab](local-lab.md), and
+[`rejected/`](../config/examples/rejected/) one case for each rule of
+[validation](#validation), named after its error.
 
 ```toml
-[[routes]]
-when = { path = "/wrapper" }
-use = "synthetic-envelope@1"
+id = "lab-events"           # letters, digits, - and _
+name = "Lab events"
 
-[[routes]]
-when = { path = "/player" }
-use = "query-parameter@1"
+[headers.media]             # named header sets, used by steps and streams
+User-Agent = "StreamLab/1"
+
+[catalogue]                 # optional: no input        → list of items
+[sources]                   # optional: input.item      → list of candidates
+[resolve]                   # required: input.candidate → stream or next candidate
+[resolvers.<name>]          # chosen by the routes of resolve
+[recipes.<name>]            # inputs = [...], run with `call`
 ```
 
+A flow is a list of `steps`. `catalogue` may instead list `items` written in
+the file; `resolve` may instead hold `routes`.
+
+| Model | Fields |
+|---|---|
+| Item | `id`, `title`; `group`, `logo`, `starts_at` when known; other text fields for the next flows |
+| Candidate | `id`; `label`, `language`, `quality` when known; other text fields (`url`, `type`…) |
+| Stream | `url`; `headers` for manifests, keys and segments; `format` as a hint (`hls`, `dash`, `progressive`); `expires_at` when known |
+| Next | a new candidate, with at least `id` and `url`, routed again |
+
+A source with a `catalogue` gives its items as channels or events: a "Rai"
+source lists Rai 1, Rai 2… from RaiPlay. Without `sources`, an item is its
+only candidate.
+
+### Steps and references
+
+Each step has `id`, `op` and the operation's parameters; the last step is
+the flow's result. A step reads the flow's inputs and the steps before it,
+so a cycle cannot be written inside a flow. Parameters are templates:
+
+- `{step}`, `{step.a.b.0}` into a JSON value or a record, `{input.item.id}`,
+  `{input.candidate.url}`, `{input.device}` (the app's device UUID, in
+  every flow), `{item.x}` inside `list.map`;
+- a field whose name has other characters than letters, digits, `-` and
+  `_` is quoted: `{config."common:web:client"}`;
+- a reference may hold another, resolved first: `{pool.{order.0}}`;
+- the response of `http` has `.body` (bytes), `.text`, `.json`,
+  `.header.Name` and `.url` (after redirects);
+- a template that is one reference keeps the value's kind (bytes, a list…);
+  any other template is text, with the values inserted as they are: a
+  signed URL is never re-encoded or truncated, and bytes are read as UTF-8.
+  `{x|component}` percent-encodes a value as one URL component;
+- a `{` not followed by a letter or `_` is text, so a JSON body needs no
+  escaping.
+
+Routes are tried in order on the candidate: `when = { type, host, path }`
+compares its `type` field and the host and path of its `url`, exactly;
+`use` names a resolver, or `"stream"` when the candidate's `url` is already
+the media, with optional `headers`. No match ends in `unsupported_host`.
+There is no conditional between steps: choices live only in routes.
+
+### Vocabulary
+
+| Operation | In → out | Parameters |
+|---|---|---|
+| `http` | → response | `url`, `method` (GET/POST), `query`, `body`, `headers` (a set's name, or a table of templates) |
+| `json` | text/bytes → JSON | `from` |
+| `m3u` | text → list of entries (title, url, logo, group) | `from` |
+| `html.attr` | text → text, or list with `all = true` | `from`, `selector` (CSS), `attribute`, `base` to resolve a relative URL |
+| `nextflight` | text → JSON | `from`, `key`: the value after `"key":` in the payloads pushed to `self.__next_f` |
+| `protobuf` | bytes → record (field number → values; an absent field is an empty list, as in Protobuf) | `from` |
+| `text.match` | text → text | `from`, `pattern` (one group) |
+| `list.map` | list → list | `list`; `item` (each field a template or `{ from, pattern }`), or `call` and `input` to make each entry the result of a recipe (`{item}` is the entry); `where` (fields equal to templates) |
+| `text` | → text | `template` |
+| `url.param` | text → text (decoded) | `from`, `name` |
+| `url.query_after` | text → text (raw, to the end) | `from`, `name` |
+| `url.set` | text → text | `from`, `name`, `value`: one query parameter set, the others kept |
+| `base64.decode` / `base64.encode` | text ↔ bytes | `from`, `alphabet` (`standard`, `url`), `padding = false` to encode without `=` |
+| `hex.decode` / `hex.encode` | text ↔ bytes | `from` |
+| `rot47` | text → text | `from` |
+| `bytes.xor` | bytes, bytes → bytes | `a`, `b` |
+| `md5` | text/bytes → hex text | `from` |
+| `aes.decrypt` | bytes → bytes | `mode` (`gcm`, `ctr`, `cbc`), `key` and `iv` (bytes, or text as UTF-8), `data`, `aad` (gcm) |
+| `aes.encrypt` | bytes → bytes | `mode` (`ctr`), `key`, `iv`, `data` |
+| `call` | → the recipe's result | `recipe`, `input` (the recipe's `inputs`) |
+| `stream` | → stream | `url`, `headers`, `format`, `expires_at` |
+| `next` | → next candidate | `candidate` (a table: a flat `id` would be the step's) |
+
+The vocabulary was checked on 23 November with a throwaway interpreter, to
+six seconds of video and audio decoded by FFmpeg with the stream's
+headers: the seven lab examples, and real sources (the 15 channels of a Rai
+catalogue, of which Rai 4K is DASH; Pluto's guide; TV8). The chains come
+from the cases studied: event catalogues with several signals per event,
+iframes on several hosts, an AES-GCM envelope in a player page, a raw query
+after `url=`, Next Flight data, and an app answering Protobuf with signed
+requests, ROT47 and an AES-CTR token in the path (`lab-binary`).
+
+### Validation
+
+Before a source can be used, [validate.rs](../crates/core/src/source/validate.rs)
+rejects, naming the flow and the step:
+
+- an unknown operation or field, a missing one, a value of the wrong form;
+- a reference to a step that does not come earlier, to an input the flow
+  does not have, or to a field a value cannot have;
+- a value that cannot fit where it goes, when that is known before running
+  (a list where bytes are needed, bytes pasted into a text); values read
+  from JSON or Protobuf are checked when they run;
+- a header set, resolver or recipe that does not exist, a `call` whose
+  inputs are not those the recipe names;
+- duplicate step ids, two routes with the same `when`, recipes calling
+  themselves;
+- a pattern without exactly one group, a selector lol_html does not accept;
+- a flow whose last step cannot give its result: a list with `id` (and
+  `title` for a catalogue), or a stream, a next candidate or a `call`.
+
+The [JSON Schema](../schemas/source.schema.json) describes the structure
+for editors; the rules beyond it are the Rust validation's.
+
+## Composable resolvers
+
+The main flows stay simple, and the branches with their own
+responsibilities are named resolvers, chosen by routes, or recipes run with
+`call`, which several resolvers can share. Each resolver returns a stream
+or the next candidate to route; the engine continues the chain and applies
+its limits, and the resolver does not need to know the later destinations.
+In [lab-events](../config/examples/lab-events.toml) the envelope resolver
+returns a player URL, and the next route extracts `liveUrl` and gives the
+stream.
+
 A recipe is extracted when it has a recognisable responsibility, changes
-independently of its callers or can be shared by several sources.
-Simple local conditions stay in the recipe. Changing the parser of a
-URL-parameter player, for example, requires a change to the resolver and to
-its fixtures; the providers that call it keep using it through the compatible
-reference. One file per condition is not needed.
+independently of its callers or is shared: changing the parser of a
+URL-parameter player changes that resolver and its example, and the
+sources that route to it keep using it.
 
 Retry, renewal and switching to the alternative stream are decisions of the
-[application session](architecture.md#modules-and-decision-ownership),
-parametrised by the profile. Recipes expose the specific steps to obtain a
-new link; the recovery policy is shared.
+[application session](architecture.md#modules-and-decision-ownership).
+Sources expose the steps to obtain a new link; the recovery policy is shared.
 
 ## Profiles, state and versions
 
 These are distinct:
 
-- source profiles: endpoints, mappings and flows;
-- resolver recipes: steps shared per host/protocol;
+- source files: steps, routes and recipes;
 - app settings: user and device preferences;
-- temporary contexts: cookies, tokens, URLs and renewal state, managed by the
-  runtime.
+- temporary contexts: cookies, tokens, URLs and renewal state, kept in
+  memory by the runtime.
 
-The static file describes how to obtain a token or renew a link. Temporary
-values do not become permanent configuration. Any user credential is
-referenced through a pointer to a store outside the profile. Headers are
-scoped by role and host; a provider's HTTP context is not extended
-automatically to other domains.
+A source describes how to obtain a token or renew a link; temporary values
+do not become configuration. Headers are those of the step or the stream
+that names them; a provider's HTTP context is not extended to other
+domains.
 
-The future contract must distinguish the schema version, the profile
-revision and the version of the operations/adapters. The loader checks all
-the required capabilities and also validates the adapter-specific
-parameters. Unknown IDs produce an error before activation. A change of
-semantics requires a compatible version or an explicit migration.
-
-There is a single loading pipeline:
+One loading pipeline, whatever the format:
 
 ```text
-file → format parser → common ProfileSpec
-     → structural and semantic validation → ExecutionPlan
-     → execution with the registry of available capabilities
+file → TOML (or JSON) parser → common data model → Source → validation
 ```
 
-`ProfileSpec` and `ExecutionPlan` are types proposed by the design. The
-engine receives the typed plan and does not interpret `.json`, `.toml` or
-`.yaml` extensions. Errors must keep the file and the path of the
-field/step, so that a wrong profile can be fixed without following internal
-logs.
+The data model is the one TOML and JSON share
+([`Source::from_toml`](../crates/core/src/source/mod.rs)); the engine will
+receive the checked `Source` and never read extensions. Errors name the
+flow, the step and the field, and a TOML error its line.
 
 ## JSON, TOML and YAML
 
-**The recommendation is TOML as the main format for profiles written and
-maintained by hand**, because they are recipes to read, comment and change
-over time. JSON stays useful for exchange, generation and the examples of the
-current draft. The Rust parser has not been chosen yet.
+**TOML is the format of source files**, because they are recipes to read,
+comment and change over time: comments sit next to the parameters, steps
+are ordered arrays of tables, and literal strings suit patterns and
+backslashes ([TOML 1.0](https://toml.io/en/v1.0.0)). JSON stays useful for
+exchange and generated data, with the same data model. YAML adds choices on
+types, tags and aliases with no need yet.
 
-| Format | Assessment for this project | Proposed direction |
-|---|---|---|
-| TOML | Comments next to the parameters; ordered steps with arrays of tables; literal strings useful for patterns and backslashes | Main format for sources and shared recipes |
-| JSON | Natural for recursive structures and generated data; standard syntax without comments | Interoperability and fixtures; import support stays in the loader |
-| YAML | Compact syntax for nested structures, with extra choices on types, tags and aliases | No need has emerged for the first runtime |
+TOML's practical limit is deep trees of branches: section paths grow
+longer, and a sub-table of an array binds to its most recent element.
+Named resolvers and recipes keep the files flat, so this limit does not
+justify making TOML secondary now.
 
-TOML suits flows because the steps are **ordered lists**. Named tables serve
-instead for parameters, mappings and callable recipes; their order in the
-file must not define the execution order. A comment can explain why a header
-or a query parser is needed, next to the value. These are properties of the
-[TOML](https://toml.io/en/v1.0.0) syntax, not a workflow engine already
-included in the format.
+The common data model admits tables with text keys, lists, texts and
+booleans; a TOML date where a text is expected is an invalid value, and
+duplicate keys are a TOML error.
 
-### Comparison on project examples
+## Not built yet
 
-Two comparisons that can be checked with synthetic data are available:
+- The engine that runs the steps, with its limits per resolution (steps,
+  requests, chain and `call` depth, size of a response, items in a list) and
+  the outcomes of the [architecture](architecture.md#extensions-and-compatibility).
+- JSON import into the same `Source`, with the file in the errors.
+- The channel list naming a source (`source = "rai"`) in place of the
+  provisional [recipe steps](channel-list.md#recipe-steps).
+- Catalogue pagination: no case has needed it.
 
-- [TOML resolver profile](../config/design-examples/resolver-v1.toml) and
-  [JSON v1](../config/examples/resolver-demo.json): same data and same schema.
-- [TOML flow](../config/design-examples/fixture-flow.toml) and
-  [equivalent JSON](../config/design-examples/fixture-flow.json): catalogue,
-  details, ordered steps and dispatch. This is an example of the proposed
-  language, not accepted by the v1 schema nor executed by a runtime.
-  Operations, references and templates remain illustrative.
-
-The comparison supports TOML for these mostly linear recipes. Repeated lists
-of steps and comments turn out easier to maintain; fewer lines or brackets
-alone are not a measure of modularity. The format does not solve typing,
-fallback or versioning: they remain responsibilities of the model and of the
-engine.
-
-### Branches and nested structures
-
-TOML's practical limit appears with deep trees of branches and sub-flows:
-section paths grow longer, and a sub-table of an array refers to the most
-recent element. The [synthetic profile](../config/design-examples/resolver-v1.toml)
-shows this binding for `resolution.rules.operation`.
-
-For the cases studied, the [composable resolvers](#composable-resolvers)
-approach applies. If a future feature really requires complex recursive
-trees, their representation will be reassessed; this limit does not justify
-making TOML secondary now.
-
-### Parsing, validation and compatibility
-
-The engine always receives the same internal types:
-
-```text
-TOML profile → TOML parser ┐
-                         ├→ ProfileSpec → validation → ExecutionPlan
-JSON profile → JSON parser┘
-```
-
-The schema can stay written in JSON Schema: its subject is the JSON-compatible
-data model, which can also be obtained from TOML parsing. There is no need to
-rewrite the schemas in TOML or to convert every profile on disk before use.
-This distinction is explained by the
-[official JSON Schema glossary](https://json-schema.org/learn/glossary#json).
-
-The common subset admits maps with string keys, lists, strings, booleans and
-finite numbers within the limits of the contract. IDs and timestamps stay
-explicit strings. Optional fields are omitted: the absence of `null` in TOML
-is not an obstacle for the profiles examined. Native TOML dates and
-non-finite numeric values are rejected by the experimental policy, instead of
-being converted implicitly. Duplicate keys must be rejected during parsing.
-
-The examples use constructs available in TOML 1.0, checked against the
-[specification](https://toml.io/en/v1.0.0). New features are not required
-just because a later version exists. A possible YAML frontend will have to
-produce the same values, with explicit rules for types and without custom
-tags or aliases. The term “JSON schema” in the YAML specification concerns
-the resolution of YAML types and is not the same as the JSON Schema standard.
-
-### Repeatable check of the comparison
-
-With Python 3.11+ and the single development dependency `jsonschema`:
-
-```sh
-uv run --no-project --with jsonschema python dev/checks/check-config-formats.py
-```
-
-The [check](../dev/checks/check-config-formats.py) verifies data equivalence,
-order of steps and branches, scope of sub-tables, reuse of the v1 schema, and
-rejection of invalid fields, duplicate keys, native dates and non-finite
-numbers. It also verifies that the flow example is not mistaken for a v1
-profile. It does not verify a Rust parser, an executable plan or live access.
-Comments are kept in the source file; the model read by the parser does not
-keep their text. A future editor that rewrites files will have to handle this
-requirement separately.
-
-Additional references: [JSON, RFC 8259](https://www.rfc-editor.org/rfc/rfc8259),
-[YAML 1.2.2](https://yaml.org/spec/1.2.2/).
-
-## Gap from the current draft
-
-The [current schema](../schemas/source.schema.json) validates five examples
-through [check-source-profiles.py](../dev/checks/check-source-profiles.py).
-It is not yet an executable contract and does not contain all of this
-proposal. On the TV only a provisional recipe runs, in the `.stream` files and
-in the channel list, with four operations and textual parameters, without
-types or references ([recipe.rs](../crates/core/src/live/recipe.rs),
-[recipe steps](channel-list.md#recipe-steps)); the contract will
-replace it. Before the runtime, the schema and semantics of the following
-must be defined together:
-
-- a `sources` flow distinct from the catalogue, and nested lists of
-  candidates;
-- typed steps, references and shared recipes;
-- request bodies, adapter parameters and HTTP scopes per host;
-- profile revision, required capabilities and compatibility;
-- renewal and fallback that keep the stream's identity and the errors.
-
-The existing draft stays recognisable and its examples disabled. The new
-structure will have to be validated before schema, examples and loader are
-updated together.
+The order is in [Next steps](todo.md).

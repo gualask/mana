@@ -3,6 +3,7 @@ import json
 import re
 import secrets
 from urllib.parse import urlencode
+from . import binary
 from .state import UA
 
 
@@ -47,6 +48,9 @@ def api(state, path, query, headers, method, body):
         return document(200, {'now': state.clock.advance(seconds)})
     if method != 'GET':
         return document(405, {'code': 'method_not_allowed'})
+    signed = binary.handle(state, path, query, headers)
+    if signed is not None:
+        return signed
     if path == '/channels.m3u':
         return text(200, '#EXTM3U\n#EXTINF:-1,Synthetic bars and tone\n' + state.origins['media'] + '/public/master.m3u8\n', 'audio/x-mpegurl')
     if path == '/embedded':
@@ -109,7 +113,7 @@ def media(state, path, query, headers, method, body):
     if channel and channel[1] in state.channels:
         return live(state, state.channels[channel[1]], path[channel.end():], headers, query)
     protected = path.startswith('/protected/')
-    session = re.fullmatch(r'/token-([A-Za-z0-9_-]+)/session/(.+)', path)
+    session = re.fullmatch(r'/token-([A-Za-z0-9_%-]+)/session/(.+)', path)
     if protected or session:
         if any(headers.get(key) != value for key, value in state.headers().items()):
             return document(403, {'code': 'missing_media_headers'})

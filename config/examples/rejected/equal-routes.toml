@@ -1,0 +1,11 @@
+# The second route could never be chosen.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.routes]]
+when = { type = "m3u8" }
+use = "stream"
+
+[[resolve.routes]]
+when = { type = "m3u8" }
+use = "stream"

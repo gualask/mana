@@ -68,6 +68,8 @@ class State:
     ctr_key: bytes = field(default_factory=lambda: secrets.token_bytes(32))
     ctr_iv: bytes = field(default_factory=lambda: secrets.token_bytes(16))
     sessions: dict = field(default_factory=dict)
+    # Request code -> version the signed binary catalogue expects in paths.
+    binary_versions: dict = field(default_factory=lambda: {100: 'a' + secrets.token_hex(3), 102: 'b' + secrets.token_hex(3)})
     # Path prefix -> lab.live.Live when serving live streams; faults are
     # injected into the first one.
     channels: dict = field(default_factory=dict)

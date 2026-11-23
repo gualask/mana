@@ -1,0 +1,21 @@
+# An AES key must be bytes, a list is given.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "keys"
+op = "m3u"
+from = "#EXTM3U"
+
+[[resolve.steps]]
+id = "plain"
+op = "aes.decrypt"
+mode = "ctr"
+key = "{keys}"
+iv = "{keys}"
+data = "{keys}"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

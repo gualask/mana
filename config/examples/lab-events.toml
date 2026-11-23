@@ -1,0 +1,146 @@
+# Event catalogue → detail with several signals → routes: direct HLS, or an
+# AES-GCM envelope whose target is a player page carrying the media URL.
+id = "lab-events"
+name = "Lab events"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[headers.media]
+User-Agent = "StreamLab/1"
+Referer = "http://127.0.0.1:8782/"
+X-Lab-Media = "synthetic"
+
+[[catalogue.steps]]
+id = "page"
+op = "http"
+url = "http://127.0.0.1:8781/catalogue.json"
+headers = "lab"
+
+[[catalogue.steps]]
+id = "events"
+op = "list.map"
+list = "{page.json}"
+item = { id = "{item.id}", title = "{item.title}" }
+
+[[sources.steps]]
+id = "detail"
+op = "http"
+url = "http://127.0.0.1:8781/events/{input.item.id|component}.json"
+headers = "lab"
+
+[[sources.steps]]
+id = "signals"
+op = "list.map"
+list = "{detail.json.signals}"
+item = { id = "{item.id}", label = "{item.label}", type = "{item.play_type}", url = "{item.url}" }
+
+[[resolve.routes]]
+when = { type = "m3u8" }
+use = "stream"
+headers = "media"
+
+[[resolve.routes]]
+when = { host = "127.0.0.1", path = "/wrapper" }
+use = "envelope"
+
+[[resolve.routes]]
+when = { host = "127.0.0.1", path = "/player" }
+use = "live-url"
+
+# The page holds the AES-256-GCM material as base64url strings in a pool,
+# in the order given by a second array: key XOR mask, mask, IV, data+tag, AAD.
+[[resolvers.envelope.steps]]
+id = "page"
+op = "http"
+url = "{input.candidate.url}"
+headers = "lab"
+
+[[resolvers.envelope.steps]]
+id = "pool_text"
+op = "text.match"
+from = "{page.text}"
+pattern = 'const _0xp=(\[.*?\]),'
+
+[[resolvers.envelope.steps]]
+id = "pool"
+op = "json"
+from = "{pool_text}"
+
+[[resolvers.envelope.steps]]
+id = "order_text"
+op = "text.match"
+from = "{page.text}"
+pattern = '_0xi=(\[.*?\]);'
+
+[[resolvers.envelope.steps]]
+id = "order"
+op = "json"
+from = "{order_text}"
+
+[[resolvers.envelope.steps]]
+id = "masked"
+op = "base64.decode"
+from = "{pool.{order.0}}"
+alphabet = "url"
+
+[[resolvers.envelope.steps]]
+id = "mask"
+op = "base64.decode"
+from = "{pool.{order.1}}"
+alphabet = "url"
+
+[[resolvers.envelope.steps]]
+id = "iv"
+op = "base64.decode"
+from = "{pool.{order.2}}"
+alphabet = "url"
+
+[[resolvers.envelope.steps]]
+id = "data"
+op = "base64.decode"
+from = "{pool.{order.3}}"
+alphabet = "url"
+
+[[resolvers.envelope.steps]]
+id = "aad"
+op = "base64.decode"
+from = "{pool.{order.4}}"
+alphabet = "url"
+
+[[resolvers.envelope.steps]]
+id = "key"
+op = "bytes.xor"
+a = "{masked}"
+b = "{mask}"
+
+[[resolvers.envelope.steps]]
+id = "plain"
+op = "aes.decrypt"
+mode = "gcm"
+key = "{key}"
+iv = "{iv}"
+data = "{data}"
+aad = "{aad}"
+
+[[resolvers.envelope.steps]]
+id = "target"
+op = "json"
+from = "{plain}"
+
+[[resolvers.envelope.steps]]
+id = "next"
+op = "next"
+candidate = { id = "{input.candidate.id}", url = "{target.u}" }
+
+[[resolvers.live-url.steps]]
+id = "media"
+op = "url.param"
+from = "{input.candidate.url}"
+name = "liveUrl"
+
+[[resolvers.live-url.steps]]
+id = "stream"
+op = "stream"
+url = "{media}"
+headers = "media"

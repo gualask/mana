@@ -1,0 +1,8 @@
+# A reference without its `}`.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/{input.candidate.id"

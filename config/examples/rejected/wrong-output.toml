@@ -1,0 +1,8 @@
+# A resolution ends on a stream or a next candidate.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "url"
+op = "text"
+template = "http://127.0.0.1:8783/public/master.m3u8"

@@ -2,23 +2,21 @@
 
 Project direction of 15 November 2026. The agreed requirement is a player
 that can be extended through configuration: everything that can be expressed
-by composing capabilities already available must stay in the profiles. New
+by composing capabilities already available must stay in the source files. New
 inputs, resolvers and protocols must have distinct extension points.
 
 This document defines the structure, the contracts and the responsibilities.
 The workspace contains the shared library `mana-core` and the [TV
-app](tv-app.md). **The recipe contract described here is not implemented
-yet**: live streams use the provisional recipe of the `.stream` files and of
-the channel list. The syntax currently validated is defined in the
-[v1 schema](../schemas/source.schema.json); the [Configuration and
-extensions](configuration.md) rules separate that draft from the capabilities
-still to be built.
+app](tv-app.md). **Source files are read and checked, but nothing runs
+them yet**: live streams use the provisional recipe of the `.stream` files
+and of the channel list. The source file is defined in [Configuration and
+extensions](configuration.md), with what is still to be built.
 
 ## Requirements and evidence
 
 | Need | Evidence and consequence |
 |---|---|
-| New sources mostly through profiles | Endpoints, mappings and flows must compose registered capabilities |
+| New sources mostly through source files | Endpoints, mappings and flows must compose registered capabilities |
 | Different inputs and chains of resolvers | [Synthetic scenarios](../dev/lab/scenarios.py): JSON, embedded data, iframe, encrypted envelope and binary session |
 | Algorithms without implicit network logic | [Lab decoders](../dev/lab/codecs.py): decoders without network access, usable by the tests |
 | TV and desktop apps, automated tests | Same session service; each client has its own presentation and video backend |
@@ -42,7 +40,7 @@ exists only on webOS. The language stays Rust; zig serves only as C compiler
 and as linker for the TV's glibc 2.28.
 Plugins loadable at
 runtime may be evaluated when a concrete requirement for independent
-distribution emerges. External profiles may be added without recompiling
+distribution emerges. Source files may be added without recompiling
 if all the capabilities they require are already in the binary.
 
 ## Common contract
@@ -91,8 +89,8 @@ ResolutionOutcome = MediaResource(resource) | NextCandidate(candidate)
 With `NextCandidate`, the engine selects the resolver again from the registry
 and continues the chain. With `MediaResource`, the application passes the
 resource to `playback` to check it before handing `PlayableStream` to the
-client. The resolver can be a declarative recipe or a registered adapter:
-the contract is the same and the UI does not know the intermediate steps.
+client. The resolver is a flow of the source file, and the UI does not know
+the intermediate steps.
 
 The engine checks dynamic cycles and depth within the context of the single
 resolution, and applies a total budget of steps/requests even when the
@@ -106,7 +104,8 @@ The split of the recipes and a synthetic example are described in the
 | Module | Owns | Change it isolates |
 |---|---|---|
 | `session` | The current viewing, one at a time; reopening and new resolution with their limit; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
-| `live` | `.stream` files, provisional recipe, HLS client; reports interruptions without deciding | Source protocols and formats |
+| `live` | The stream to play (`Playable`: a `.stream` file or a channel's URL), provisional recipe, HLS client; reports interruptions without deciding | Stream protocols and formats |
+| `source` | Source files: their contract, the vocabulary of their steps and the checks before use; later the engine that runs them | Providers, written as data |
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |
 | `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; device identifier | List formats and their lifecycle |
 | `net` | TLS and roots, timeouts, User-Agent, responses rejected beyond the limit set by the reader (playlists, keys and segments in `live::hls`), URLs without tokens in the log; headers and CA of the single source, with credentials sent only to the origins the source names; maximum length of a value in a request line (`MAX_LINE_VALUE`), for URLs and headers | HTTP transport |
@@ -123,8 +122,7 @@ the previous viewing end on their own at their next check, and the new viewing
 opens its own backend only after the previous one has released its own; a
 viewing stopped in the meantime opens none. This way a request stuck on the
 network does not block the remote control; only exiting the app waits for the
-threads, within a limit. When recipes arrive, the profile will parametrise
-the policy.
+threads, within a limit. The policy is the same for every source.
 
 Protocol-specific context belongs to the provider or resolver instance, with
 source/session scope. Cookies and connections belong to the transport, with
@@ -139,7 +137,7 @@ apps → session → live → playback (Input port only)
              → playback
 apps → playback (Backend port), catalog, net
 catalog → live (source, recipe), net
-apps, catalog, live, net, playback, session → language
+apps, catalog, live, net, playback, session, source → language
 apps, catalog, language, live, playback, session → log
 live → net
 live, playback → adts
@@ -174,6 +172,7 @@ crates/core/                # mana-core: no UI and no platform dependency
     session/                # viewing, reopening (reopen.rs), viewing state and merged statistics (stats.rs)
     live/                   # playable.rs (a stream to play), recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
+    source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs), checks (validate.rs)
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
     net.rs, log.rs, adts.rs
@@ -196,9 +195,10 @@ soon the desktop, start the same viewings. The live policy, once split between
 the HLS client and the player and changed in both across eight commits, lives
 only in `session`: `live` and `playback` report and do not decide. The fake
 backend of `playback` runs feeder, timeline and reopening in `cargo test`
-on the Mac. Domain modules, profile loader, recipe engine, CLI and contract
-tests will arrive with the first executable contract for recipes
-([Next steps and open questions](todo.md)).
+on the Mac. `source` is apart from `live`: "source" there meant the stream
+to play, and the contract needs none of the HLS client. The engine, the CLI
+and the contract tests on the runtime follow ([Next steps and open
+questions](todo.md)).
 
 ### Desktop client
 
@@ -238,29 +238,30 @@ Constraints found in the trial with Rune:
 
 The three extension points have distinct contracts:
 
-- Recipe operation: typed input and output, parameter schema and declared
-  capability/version. It can be reused by several providers.
-- Provider/resolver: produces common models or the next resolution step;
-  receives transport and context through the engine's ports.
+- Operation of the source files: typed input and output and parameters
+  ([operation.rs](../crates/core/src/source/operation.rs)), reused by every
+  source; a new meaning is a new operation, never a change of an old one.
+- Source and resolver: data, producing common models or the next
+  resolution step from the existing operations.
 - Media backend: declares the supported formats, codecs and HTTP policies,
   and produces playback events common to the application.
 
 A new API protocol may need a data provider/decoder. A new transport or video
 format may need support in `playback` and in the backend. Adding a value to
-the profile does not enable a codec on the TV.
+a source does not enable a codec on the TV.
 
-Loading checks versions and capabilities before activating a profile.
-An update replaces the profile only after full validation; a wrong profile
-does not delete the last valid one. The current session keeps the revision it
-started with. A new session uses the new plan.
-Binary plugins and automatic distribution of profiles stay out of the first
-step: local import must already respect this contract. The provisional
+Reading rejects a source that uses an operation this version does not have,
+or breaks a rule of the contract, before it is used. An update will replace
+a source only after full validation; a wrong source will not delete the last
+valid one. The current session keeps the source it started with; a new
+session uses the new one. Binary plugins stay out: a capability missing from
+the vocabulary is a new operation in a new version of the app. The provisional
 recipes arrive with the channel list, from the URL the user chooses on the
 phone ([Channel list](channel-list.md)).
 
 Outcomes include `upcoming`, `ended`, `no_sources`, `unsupported_host`,
 `auth_required`, `challenge_required`, `source_changed`, `network_error`,
-`rate_limited`, `media_unsupported`, `access_denied`, `invalid_profile`,
+`rate_limited`, `media_unsupported`, `access_denied`, `invalid_source`,
 `unsupported_capability` and `cancelled`. HTTP 403 is kept as a denial whose
 cause may be unknown; `auth_required` is used when there is explicit evidence
 that authentication is required. The failure of a stream allows trying
@@ -278,8 +279,9 @@ The operational sequence and the completion criteria are kept in
 [Next steps and open questions](todo.md).
 
 The proof of modularity is a concrete change: adding a source with existing
-operations changes the profile and fixtures; a new resolver changes its
-module, registration and contract; a new parser changes the loader.
+operations changes its source file and the examples; a new operation
+changes the vocabulary, its checks and its tests; a new file format changes
+the reading.
 None of these cases requires site logic in the screens or in the decoder.
 
 The runtime will be separate from the lab's test servers and clients.

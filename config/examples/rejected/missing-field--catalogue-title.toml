@@ -1,0 +1,19 @@
+# The catalogue's entries need a `title`.
+id = "rejected"
+name = "A case to reject"
+
+[[catalogue.steps]]
+id = "page"
+op = "http"
+url = "http://127.0.0.1:8781/catalogue.json"
+
+[[catalogue.steps]]
+id = "events"
+op = "list.map"
+list = "{page.json}"
+item = { id = "{item.id}" }
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

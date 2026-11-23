@@ -1,0 +1,13 @@
+# Two steps named alike.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "stream"
+op = "text"
+template = "x"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

@@ -11,3 +11,4 @@ pub mod log;
 pub mod net;
 pub mod playback;
 pub mod session;
+pub mod source;

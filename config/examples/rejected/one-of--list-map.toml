@@ -1,0 +1,24 @@
+# list.map maps the fields of `item` or calls a recipe, not both.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "entries"
+op = "list.map"
+list = "{input.candidate.url}"
+item = { id = "{item.id}" }
+call = "message"
+input = { bytes = "{item}" }
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"
+
+[recipes.message]
+inputs = ["bytes"]
+
+[[recipes.message.steps]]
+id = "message"
+op = "protobuf"
+from = "{input.bytes}"

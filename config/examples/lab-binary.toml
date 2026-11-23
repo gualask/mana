@@ -1,0 +1,230 @@
+# Signed binary catalogue: a ROT47 configuration names the player origin every
+# request sends; catalogue and detail are signed with a version per request
+# code and an MD5 prefix of the query; answers are Protobuf, lists are
+# repeated messages; the session is sealed with AES-256-CTR under a key
+# written as text, and goes base64 into the media path.
+id = "lab-binary"
+name = "Lab signed binary catalogue"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[[catalogue.steps]]
+id = "params"
+op = "http"
+url = "http://127.0.0.1:8781/bin/api/common/params"
+headers = "lab"
+
+[[catalogue.steps]]
+id = "config_text"
+op = "rot47"
+from = "{params.text}"
+
+[[catalogue.steps]]
+id = "config"
+op = "json"
+from = "{config_text}"
+
+[[catalogue.steps]]
+id = "client"
+op = "json"
+from = "{config.\"common:web:client\"}"
+
+[[catalogue.steps]]
+id = "origin"
+op = "text"
+template = "http://{client.trd.iframePlayerDomains.0}"
+
+[[catalogue.steps]]
+id = "query"
+op = "text"
+template = "language=8&sportType=1&stream=true"
+
+[[catalogue.steps]]
+id = "live"
+op = "call"
+recipe = "signed"
+input = { kind = "live", code = "100", query = "{query}", origin = "{origin}" }
+
+[[catalogue.steps]]
+id = "matches"
+op = "list.map"
+list = "{live.1}"
+call = "message"
+input = { bytes = "{item}" }
+
+[[catalogue.steps]]
+id = "events"
+op = "list.map"
+list = "{matches}"
+item = { id = "{item.1.0}", title = "{item.19.0}", origin = "{origin}" }
+
+[[sources.steps]]
+id = "query"
+op = "text"
+template = "matchId={input.item.id}&language=8&sportType=1&stream=true"
+
+[[sources.steps]]
+id = "detail"
+op = "call"
+recipe = "signed"
+input = { kind = "detail", code = "102", query = "{query}", origin = "{input.item.origin}" }
+
+[[sources.steps]]
+id = "streams"
+op = "list.map"
+list = "{detail.2}"
+call = "message"
+input = { bytes = "{item}" }
+
+[[sources.steps]]
+id = "candidates"
+op = "list.map"
+list = "{streams}"
+item = { id = "{item.1.0}", label = "{item.3.0}", site = "{item.9.0}", match = "{input.item.id}", origin = "{input.item.origin}" }
+
+[[resolve.steps]]
+id = "user"
+op = "call"
+recipe = "answer"
+input = { url = "http://127.0.0.1:8781/bin/api/user/info", origin = "{input.candidate.origin}" }
+
+[[resolve.steps]]
+id = "detail"
+op = "http"
+url = "http://127.0.0.1:8781/bin/api/stream/detail?matchId={input.candidate.match}&streamId={input.candidate.id}&siteType={input.candidate.site}&continent={user.3.0}&country={user.2.0}"
+headers = { User-Agent = "StreamLab/1", Origin = "{input.candidate.origin}", Referer = "{input.candidate.origin}/" }
+
+[[resolve.steps]]
+id = "envelope"
+op = "protobuf"
+from = "{detail.body}"
+
+[[resolve.steps]]
+id = "message"
+op = "protobuf"
+from = "{envelope.10.0}"
+
+[[resolve.steps]]
+id = "stream_message"
+op = "protobuf"
+from = "{message.2.0}"
+
+[[resolve.steps]]
+id = "raw"
+op = "rot47"
+from = "{stream_message.4.0}"
+
+[[resolve.steps]]
+id = "url"
+op = "text.match"
+from = "{raw}"
+pattern = '^.{8}(.*)$'
+
+[[resolve.steps]]
+id = "sealed"
+op = "aes.encrypt"
+mode = "ctr"
+key = "lab-binary-key-0123456789abcdefg"
+iv = "lab-binary-iv-01"
+data = "{detail.header.X-Lab-Session}"
+
+[[resolve.steps]]
+id = "token"
+op = "base64.encode"
+from = "{sealed}"
+
+[[resolve.steps]]
+id = "origin"
+op = "text.match"
+from = "{url}"
+pattern = '^(https?://[^/]+)'
+
+[[resolve.steps]]
+id = "path"
+op = "text.match"
+from = "{url}"
+pattern = '^https?://[^/]+(/.*)$'
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{origin}/token-{token|component}a{path}"
+headers = { User-Agent = "StreamLab/1", Referer = "{input.candidate.origin}/", X-Lab-Media = "synthetic" }
+
+# A Protobuf message, for list.map to decode each entry of a list.
+[recipes.message]
+inputs = ["bytes"]
+
+[[recipes.message.steps]]
+id = "message"
+op = "protobuf"
+from = "{input.bytes}"
+
+# An API answer: the message in field 10 of the envelope.
+[recipes.answer]
+inputs = ["url", "origin"]
+
+[[recipes.answer.steps]]
+id = "response"
+op = "http"
+url = "{input.url}"
+headers = { User-Agent = "StreamLab/1", Origin = "{input.origin}", Referer = "{input.origin}/" }
+
+[[recipes.answer.steps]]
+id = "envelope"
+op = "protobuf"
+from = "{response.body}"
+
+[[recipes.answer.steps]]
+id = "message"
+op = "protobuf"
+from = "{envelope.10.0}"
+
+# A signed request: the version of its code, from a map of messages, then
+# /bin/v + the query's MD5 prefix + the version.
+[recipes.signed]
+inputs = ["kind", "code", "query", "origin"]
+
+[[recipes.signed.steps]]
+id = "versions"
+op = "call"
+recipe = "answer"
+input = { url = "http://127.0.0.1:8781/bin/api/common/bs?code={input.code}", origin = "{input.origin}" }
+
+[[recipes.signed.steps]]
+id = "entries"
+op = "list.map"
+list = "{versions.1}"
+call = "message"
+input = { bytes = "{item}" }
+
+[[recipes.signed.steps]]
+id = "pairs"
+op = "list.map"
+list = "{entries}"
+item = { code = "{item.1.0}", version = "{item.2.0}" }
+
+[[recipes.signed.steps]]
+id = "version"
+op = "list.map"
+list = "{pairs}"
+where = { code = "{input.code}" }
+item = { version = "{item.version}" }
+
+[[recipes.signed.steps]]
+id = "digest"
+op = "md5"
+from = "{input.query}"
+
+[[recipes.signed.steps]]
+id = "prefix"
+op = "text.match"
+from = "{digest}"
+pattern = '^(.{6})'
+
+[[recipes.signed.steps]]
+id = "answer"
+op = "call"
+recipe = "answer"
+input = { url = "http://127.0.0.1:8781/bin/v{prefix}{version.0.version}/api/match/{input.kind}?{input.query}", origin = "{input.origin}" }

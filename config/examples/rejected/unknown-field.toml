@@ -1,0 +1,9 @@
+# `enabled` is a key of the old v1 draft, not of a source.
+id = "rejected"
+name = "A case to reject"
+enabled = false
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

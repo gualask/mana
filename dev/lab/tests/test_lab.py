@@ -189,15 +189,55 @@ class LabTests(unittest.TestCase):
             self.api('/faults/redirect-loop')
         redirect.exception.close()
 
+    def test_16_signed_binary_catalogue(self):
+        from dev.lab import binary
+        import base64, hashlib
+        from urllib.parse import quote, urlencode
+        def message(raw):
+            return decode_binary(first_field(decode_binary(raw), 10, b''))
+        raw, _ = self.api('/bin/api/common/params')
+        config = json.loads(rot47(raw.decode()))
+        domain = json.loads(config['common:web:client'])['trd']['iframePlayerDomains'][0]
+        origin = 'http://' + domain
+        headers = {'Origin': origin, 'Referer': origin + '/'}
+        self.assert_http_error(self.origins['api'] + '/bin/api/common/bs', 403, 'missing_player_origin')
+        def signed(kind, params):
+            raw, _ = self.api('/bin/api/common/bs?code=' + str(binary.CODES[kind]), headers=headers)
+            entries = [decode_binary(entry) for entry in message(raw)[1]]
+            version = next(first_field(e, 2).decode() for e in entries if first_field(e, 1) == binary.CODES[kind])
+            query = urlencode(params)
+            prefix = hashlib.md5(query.encode()).hexdigest()[:6]
+            self.assert_http_error(self.origins['api'] + f'/bin/v000000{version}/api/match/{kind}?{query}', 403, 'bad_signature', headers)
+            raw, _ = self.api(f'/bin/v{prefix}{version}/api/match/{kind}?{query}', headers=headers)
+            return message(raw)
+        matches = [decode_binary(m) for m in signed('live', {'language': 8, 'sportType': 1, 'stream': 'true'})[1]]
+        self.assertEqual([first_field(m, 1) for m in matches], [7001, 7002])
+        streams = signed('detail', {'matchId': 7001, 'language': 8, 'sportType': 1, 'stream': 'true'}).get(2, [])
+        stream_id = first_field(decode_binary(streams[0]), 1)
+        self.assertEqual(signed('detail', {'matchId': 7002, 'language': 8, 'sportType': 1, 'stream': 'true'}).get(2, []), [])
+        raw, _ = self.api('/bin/api/user/info', headers=headers)
+        user = message(raw)
+        query = urlencode({'matchId': 7001, 'streamId': stream_id, 'siteType': 2001,
+                           'continent': first_field(user, 3).decode(), 'country': first_field(user, 2).decode()})
+        raw, answer = self.api('/bin/api/stream/detail?' + query, headers=headers)
+        stream = decode_binary(first_field(message(raw), 2))
+        url = rot47(first_field(stream, 4).decode())[8:]
+        encoded = crypto('ctr', key=binary.KEY.encode().hex(), iv=binary.IV.encode().hex(), session=answer['X-Lab-Session'])
+        sealed = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))
+        token = quote(base64.b64encode(sealed).decode(), safe='') + 'a'
+        parts = urlsplit(url)
+        signed_url = urlunsplit(parts._replace(path='/token-' + token + parts.path))
+        self.assert_hls_chain(signed_url, self.lab.state.headers())
+        self.assert_http_error(signed_url.replace(token, token[:-1] + 'b'), 403, 'invalid_session', self.lab.state.headers())
+
     def test_10_generated_configs(self):
         with tempfile.TemporaryDirectory(prefix='stream-lab-config-') as directory:
             path = self.lab.write_config(directory)
             data = tomllib.loads(path.read_text())
             self.assertEqual(data['origins'], self.origins)
             self.assertEqual(data['fixture_manifest_version'], 1)
-            profile = tomllib.loads((Path(directory) / 'direct-v1.toml').read_text())
-            self.assertFalse(profile['enabled'])
-            self.assertEqual(profile['catalogue']['entries'][0]['url'], data['endpoints']['public_hls'])
+            source = tomllib.loads((Path(directory) / 'direct.toml').read_text())
+            self.assertEqual(source['catalogue']['items'][0]['url'], data['endpoints']['public_hls'])
             for url in data['endpoints'].values():
                 self.assertEqual(urlsplit(url).hostname, '127.0.0.1')
 

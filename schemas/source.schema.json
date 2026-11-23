@@ -1,684 +1,904 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Design draft only. No Mana runtime currently consumes this schema. Structural validation does not establish source or device compatibility.",
-  "title": "Mana source profile — draft 1",
+  "$comment": "Structure of a Mana source file (TOML, or JSON with the same data). The contract and the rules beyond structure (references, kinds, names, cycles) are in docs/configuration.md and crates/core/src/source/; the Rust validation is what the app applies.",
+  "title": "Mana source",
   "type": "object",
   "properties": {
-    "schema_version": {
-      "const": 1
-    },
     "id": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_-]*$"
+      "pattern": "^[A-Za-z0-9_-]+$"
     },
     "name": {
       "type": "string",
       "minLength": 1
     },
-    "enabled": {
-      "type": "boolean"
-    },
-    "catalogue": {
-      "$ref": "#/$defs/catalogue"
-    },
-    "resolution": {
-      "$ref": "#/$defs/resolution"
-    },
-    "http": {
-      "$ref": "#/$defs/http"
-    },
-    "lifecycle": {
-      "$ref": "#/$defs/lifecycle"
-    },
-    "playback": {
-      "$ref": "#/$defs/playback"
-    }
-  },
-  "required": [
-    "schema_version",
-    "id",
-    "name",
-    "enabled",
-    "catalogue",
-    "resolution",
-    "http",
-    "lifecycle",
-    "playback"
-  ],
-  "additionalProperties": false,
-  "$defs": {
-    "request": {
+    "headers": {
       "type": "object",
-      "properties": {
-        "url": {
-          "type": "string",
-          "pattern": "^https?://[^\\s]+$"
-        },
-        "method": {
-          "enum": [
-            "GET",
-            "POST"
-          ]
-        },
-        "query": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
         }
-      },
-      "required": [
-        "url",
-        "method"
-      ],
-      "additionalProperties": false
-    },
-    "fields": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "title": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "home": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "away": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "competition": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "starts_at": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "url": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        },
-        "language": {
-          "type": "string",
-          "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-        }
-      },
-      "required": [
-        "id"
-      ],
-      "additionalProperties": false
-    },
-    "adapter": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 1
-        }
-      },
-      "required": [
-        "id",
-        "version"
-      ],
-      "additionalProperties": false
+      }
     },
     "catalogue": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
-            "kind": {
-              "const": "direct"
-            },
-            "entries": {
+            "items": {
               "type": "array",
               "items": {
                 "type": "object",
                 "properties": {
                   "id": {
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                   },
                   "title": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "url": {
-                    "type": "string",
-                    "pattern": "^https?://[^\\s]+$"
+                    "type": "string"
                   }
                 },
                 "required": [
                   "id",
-                  "title",
-                  "url"
+                  "title"
                 ],
-                "additionalProperties": false
-              },
-              "minItems": 1
-            }
-          },
-          "required": [
-            "kind",
-            "entries"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "m3u"
-            },
-            "request": {
-              "$ref": "#/$defs/request"
-            }
-          },
-          "required": [
-            "kind",
-            "request"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "json"
-            },
-            "request": {
-              "$ref": "#/$defs/request"
-            },
-            "items_pointer": {
-              "type": "string",
-              "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-            },
-            "fields": {
-              "$ref": "#/$defs/fields"
-            }
-          },
-          "required": [
-            "kind",
-            "request",
-            "items_pointer",
-            "fields"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "embedded_json"
-            },
-            "request": {
-              "$ref": "#/$defs/request"
-            },
-            "serialization": {
-              "const": "next_flight"
-            },
-            "field": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required_row_keys": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              },
-              "minItems": 1
-            },
-            "fields": {
-              "$ref": "#/$defs/fields"
-            }
-          },
-          "required": [
-            "kind",
-            "request",
-            "serialization",
-            "field",
-            "required_row_keys",
-            "fields"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "html"
-            },
-            "request": {
-              "$ref": "#/$defs/request"
-            },
-            "item_selector": {
-              "type": "string",
-              "minLength": 1
-            },
-            "fields": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "title": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "url": {
-                  "type": "string",
-                  "minLength": 1
+                "additionalProperties": {
+                  "type": "string"
                 }
-              },
-              "required": [
-                "id",
-                "title",
-                "url"
-              ],
-              "additionalProperties": false
+              }
             }
           },
           "required": [
-            "kind",
-            "request",
-            "item_selector",
-            "fields"
+            "items"
           ],
           "additionalProperties": false
         },
         {
+          "$ref": "#/$defs/flow"
+        }
+      ]
+    },
+    "sources": {
+      "$ref": "#/$defs/flow"
+    },
+    "resolve": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/flow"
+        },
+        {
           "type": "object",
           "properties": {
-            "kind": {
-              "const": "adapter"
-            },
-            "adapter": {
-              "$ref": "#/$defs/adapter"
+            "routes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/route"
+              }
             }
           },
           "required": [
-            "kind",
-            "adapter"
+            "routes"
           ],
           "additionalProperties": false
         }
       ]
     },
-    "operation": {
+    "resolvers": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/flow"
+      }
+    },
+    "recipes": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "steps": {
+            "$ref": "#/$defs/steps"
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "resolve"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "template": {
+      "type": "string",
+      "$comment": "Text with references: {step.field.0}, {input.candidate.url}, {pool.{order.0}}, {config.\"a:b\"}, {x|component}."
+    },
+    "templates": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/template"
+      }
+    },
+    "headers": {
+      "anyOf": [
+        {
+          "type": "string",
+          "$comment": "A header set of the source"
+        },
+        {
+          "$ref": "#/$defs/templates"
+        }
+      ]
+    },
+    "step_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "not": {
+        "enum": [
+          "input",
+          "item"
+        ]
+      }
+    },
+    "flow": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "$ref": "#/$defs/steps"
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "step": {
       "oneOf": [
         {
           "type": "object",
           "properties": {
-            "kind": {
-              "const": "iframe"
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "http"
+            },
+            "url": {
+              "$ref": "#/$defs/template"
+            },
+            "method": {
+              "enum": [
+                "GET",
+                "POST"
+              ]
+            },
+            "query": {
+              "$ref": "#/$defs/templates"
+            },
+            "body": {
+              "$ref": "#/$defs/template"
+            },
+            "headers": {
+              "$ref": "#/$defs/headers"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "json"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "m3u"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "html.attr"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
             },
             "selector": {
               "type": "string",
               "minLength": 1
             },
-            "multiple": {
-              "const": "require_selection"
+            "attribute": {
+              "type": "string",
+              "minLength": 1
+            },
+            "base": {
+              "$ref": "#/$defs/template"
+            },
+            "all": {
+              "type": "boolean"
             }
           },
           "required": [
-            "kind",
+            "id",
+            "op",
+            "from",
             "selector",
-            "multiple"
+            "attribute"
           ],
           "additionalProperties": false
         },
         {
           "type": "object",
           "properties": {
-            "kind": {
-              "const": "json_api"
+            "id": {
+              "$ref": "#/$defs/step_id"
             },
-            "request": {
-              "$ref": "#/$defs/request"
+            "op": {
+              "const": "nextflight"
             },
-            "items_pointer": {
-              "type": "string",
-              "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
+            "from": {
+              "$ref": "#/$defs/template"
             },
-            "url_pointer": {
-              "type": "string",
-              "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-            },
-            "id_pointer": {
-              "type": "string",
-              "pattern": "^(?:/(?:[^~/]|~[01])*)*$"
-            }
-          },
-          "required": [
-            "kind",
-            "request",
-            "items_pointer",
-            "url_pointer",
-            "id_pointer"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "adapter"
-            },
-            "adapter": {
-              "$ref": "#/$defs/adapter"
-            }
-          },
-          "required": [
-            "kind",
-            "adapter"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
-    "resolution": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "direct"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "host_dispatch"
-            },
-            "rules": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "hosts": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
-                    },
-                    "minItems": 1
-                  },
-                  "operation": {
-                    "$ref": "#/$defs/operation"
-                  }
-                },
-                "required": [
-                  "hosts",
-                  "operation"
-                ],
-                "additionalProperties": false
-              },
-              "minItems": 1
-            },
-            "max_depth": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 5
-            },
-            "on_unknown": {
-              "const": "unsupported_host"
-            }
-          },
-          "required": [
-            "kind",
-            "rules",
-            "max_depth",
-            "on_unknown"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "adapter"
-            },
-            "adapter": {
-              "$ref": "#/$defs/adapter"
-            }
-          },
-          "required": [
-            "kind",
-            "adapter"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "const": "unverified"
-            },
-            "reason": {
+            "key": {
               "type": "string",
               "minLength": 1
             }
           },
           "required": [
-            "kind",
-            "reason"
+            "id",
+            "op",
+            "from",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "protobuf"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "text.match"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "pattern": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from",
+            "pattern"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "list.map"
+            },
+            "list": {
+              "$ref": "#/$defs/template"
+            },
+            "item": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/template"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "$ref": "#/$defs/template"
+                      },
+                      "pattern": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "pattern"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "where": {
+              "$ref": "#/$defs/templates"
+            },
+            "call": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input": {
+              "$ref": "#/$defs/templates"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "list"
+          ],
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "item"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "call"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "input"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "call"
+              ],
+              "not": {
+                "required": [
+                  "item"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "text"
+            },
+            "template": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "template"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "url.param"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "url.query_after"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "url.set"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from",
+            "name",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "base64.decode"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "alphabet": {
+              "enum": [
+                "standard",
+                "url"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "base64.encode"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "alphabet": {
+              "enum": [
+                "standard",
+                "url"
+              ]
+            },
+            "padding": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "hex.decode"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "hex.encode"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "rot47"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "bytes.xor"
+            },
+            "a": {
+              "$ref": "#/$defs/template"
+            },
+            "b": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "md5"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "aes.decrypt"
+            },
+            "mode": {
+              "enum": [
+                "gcm",
+                "ctr",
+                "cbc"
+              ]
+            },
+            "key": {
+              "$ref": "#/$defs/template"
+            },
+            "iv": {
+              "$ref": "#/$defs/template"
+            },
+            "data": {
+              "$ref": "#/$defs/template"
+            },
+            "aad": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "mode",
+            "key",
+            "iv",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "aes.encrypt"
+            },
+            "mode": {
+              "enum": [
+                "ctr"
+              ]
+            },
+            "key": {
+              "$ref": "#/$defs/template"
+            },
+            "iv": {
+              "$ref": "#/$defs/template"
+            },
+            "data": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "mode",
+            "key",
+            "iv",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "call"
+            },
+            "recipe": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input": {
+              "$ref": "#/$defs/templates"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "recipe"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "stream"
+            },
+            "url": {
+              "$ref": "#/$defs/template"
+            },
+            "headers": {
+              "$ref": "#/$defs/headers"
+            },
+            "format": {
+              "enum": [
+                "hls",
+                "dash",
+                "progressive"
+              ]
+            },
+            "expires_at": {
+              "$ref": "#/$defs/template"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "url"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "next"
+            },
+            "candidate": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/templates"
+                },
+                {
+                  "required": [
+                    "id",
+                    "url"
+                  ]
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "candidate"
           ],
           "additionalProperties": false
         }
       ]
     },
-    "http": {
+    "route": {
       "type": "object",
       "properties": {
-        "timeout_seconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 60
-        },
-        "max_redirects": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 5
-        },
-        "headers_by_role": {
+        "when": {
           "type": "object",
           "properties": {
-            "catalogue": {
-              "type": "object",
-              "propertyNames": {
-                "pattern": "^[A-Za-z0-9-]+$"
-              },
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*$"
-              }
+            "type": {
+              "type": "string"
             },
-            "resolver": {
-              "type": "object",
-              "propertyNames": {
-                "pattern": "^[A-Za-z0-9-]+$"
-              },
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*$"
-              }
+            "host": {
+              "type": "string"
             },
-            "manifest": {
-              "type": "object",
-              "propertyNames": {
-                "pattern": "^[A-Za-z0-9-]+$"
-              },
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*$"
-              }
-            },
-            "segment": {
-              "type": "object",
-              "propertyNames": {
-                "pattern": "^[A-Za-z0-9-]+$"
-              },
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*$"
-              }
-            },
-            "key": {
-              "type": "object",
-              "propertyNames": {
-                "pattern": "^[A-Za-z0-9-]+$"
-              },
-              "additionalProperties": {
-                "type": "string",
-                "pattern": "^[^\\r\\n]*$"
-              }
+            "path": {
+              "type": "string"
             }
           },
-          "required": [],
           "additionalProperties": false
         },
-        "cookie_scope": {
-          "const": "per_source_and_domain"
+        "use": {
+          "type": "string",
+          "minLength": 1
         },
-        "cross_origin_credentials": {
-          "const": "never_automatic"
+        "headers": {
+          "$ref": "#/$defs/headers"
         }
       },
       "required": [
-        "timeout_seconds",
-        "max_redirects",
-        "headers_by_role",
-        "cookie_scope",
-        "cross_origin_credentials"
-      ],
-      "additionalProperties": false
-    },
-    "lifecycle": {
-      "type": "object",
-      "properties": {
-        "resolve_on_play": {
-          "const": true
-        },
-        "expiry": {
-          "enum": [
-            "provider",
-            "unknown",
-            "not_applicable"
-          ]
-        },
-        "max_network_retries": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 3
-        },
-        "respect_retry_after": {
-          "const": true
-        },
-        "max_refresh_attempts": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "refresh_adapter": {
-          "$ref": "#/$defs/adapter"
-        }
-      },
-      "required": [
-        "resolve_on_play",
-        "expiry",
-        "max_network_retries",
-        "respect_retry_after",
-        "max_refresh_attempts"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "max_refresh_attempts": {
-                "const": 1
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "refresh_adapter"
-            ]
-          }
-        }
-      ]
-    },
-    "playback": {
-      "type": "object",
-      "properties": {
-        "allowed_formats": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "hls",
-              "dash",
-              "progressive"
-            ]
-          },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "detect_from_body": {
-          "const": true
-        },
-        "require_device_capability_check": {
-          "const": true
-        }
-      },
-      "required": [
-        "allowed_formats",
-        "detect_from_body",
-        "require_device_capability_check"
+        "use"
       ],
       "additionalProperties": false
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "resolution": {
-            "properties": {
-              "kind": {
-                "const": "unverified"
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "enabled": {
-            "const": false
-          }
-        }
-      }
-    }
-  ]
+  }
 }

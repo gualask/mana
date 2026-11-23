@@ -1,0 +1,18 @@
+# A step reads one that comes after it.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "early"
+op = "text"
+template = "{late}"
+
+[[resolve.steps]]
+id = "late"
+op = "text"
+template = "x"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

@@ -1,0 +1,54 @@
+# Iframe → page with the API address in an attribute → JSON API → HLS.
+id = "lab-frame"
+name = "Lab iframe chain"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[headers.media]
+User-Agent = "StreamLab/1"
+Referer = "http://127.0.0.1:8782/"
+X-Lab-Media = "synthetic"
+
+[catalogue]
+items = [{ id = "frame", title = "Iframe chain", url = "http://127.0.0.1:8782/frame" }]
+
+[[resolve.steps]]
+id = "frame"
+op = "http"
+url = "{input.candidate.url}"
+headers = "lab"
+
+[[resolve.steps]]
+id = "embed_url"
+op = "html.attr"
+from = "{frame.text}"
+selector = "iframe"
+attribute = "src"
+base = "{frame.url}"
+
+[[resolve.steps]]
+id = "embed"
+op = "http"
+url = "{embed_url}"
+headers = "lab"
+
+[[resolve.steps]]
+id = "api_url"
+op = "html.attr"
+from = "{embed.text}"
+selector = "video[data-api]"
+attribute = "data-api"
+base = "{embed.url}"
+
+[[resolve.steps]]
+id = "api"
+op = "http"
+url = "{api_url}"
+headers = "lab"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{api.json.links.0.playUrl}"
+headers = "media"

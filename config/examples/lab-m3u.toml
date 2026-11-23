@@ -1,0 +1,24 @@
+# Catalogue from an M3U playlist; each entry is already the media.
+id = "lab-m3u"
+name = "Lab M3U"
+
+[[catalogue.steps]]
+id = "page"
+op = "http"
+url = "http://127.0.0.1:8781/channels.m3u"
+
+[[catalogue.steps]]
+id = "entries"
+op = "m3u"
+from = "{page.text}"
+
+[[catalogue.steps]]
+id = "channels"
+op = "list.map"
+list = "{entries}"
+item = { id = "{item.url}", title = "{item.title}", url = "{item.url}" }
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{input.candidate.url}"

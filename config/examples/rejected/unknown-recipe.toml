@@ -1,0 +1,8 @@
+# A call to a recipe that does not exist.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "shared"
+op = "call"
+recipe = "envelope"

@@ -1,0 +1,20 @@
+# Two recipes calling each other.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"
+
+[recipes.a]
+[[recipes.a.steps]]
+id = "b"
+op = "call"
+recipe = "b"
+
+[recipes.b]
+[[recipes.b.steps]]
+id = "a"
+op = "call"
+recipe = "a"

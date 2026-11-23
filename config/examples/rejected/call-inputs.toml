@@ -1,0 +1,17 @@
+# The call gives `link`; the recipe names `url`.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "shared"
+op = "call"
+recipe = "play"
+input = { link = "{input.candidate.url}" }
+
+[recipes.play]
+inputs = ["url"]
+
+[[recipes.play.steps]]
+id = "stream"
+op = "stream"
+url = "{input.url}"

@@ -6,10 +6,11 @@ fictitious events, locally generated keys and video/audio created on the fly.
 It contains no recordings of broadcasts and no responses copied from
 providers. The scenarios are defined by protocol and behaviour.
 
-**Status:** lab implemented, with fifteen
-contract/integration tests. Mana does not run profiles yet: the core
-(`crates/core`) has no profile runtime, so these tests do not prove that it
-runs them. The media server can already be
+**Status:** lab implemented, with sixteen
+contract/integration tests. Mana reads and checks source files but does
+not run them yet ([Configuration and extensions](configuration.md#not-built-yet)),
+so these tests do not prove that it runs them; the lab's chains are written
+as source files in [`config/examples/`](../config/examples/). The media server can already be
 attached to an HLS player to verify transport and decoding.
 
 ## Start and playback
@@ -54,10 +55,9 @@ flashes white with a 1 kHz beep, so sync can be measured with
 The `private/lab` directory, which `--write-config` can change, contains:
 
 - `endpoints.toml`: fixture manifest with three origins, synthetic endpoints
-  and headers. It is for the test clients; it is not a Mana source profile.
-- `direct-v1.toml`: complete, disabled source profile, conforming to the
-  schema v1 data, that points to the public HLS. The future Mana loader will
-  have to read it; today the URL can be used directly with FFplay.
+  and headers. It is for the test clients; it is not a Mana source file.
+- `direct.toml`: a [source file](configuration.md#source-files) listing the
+  public HLS; its URL also plays directly with FFplay.
 
 The files are updated at every start. The addresses are valid while the
 process is running. `private/` is excluded from version control.
@@ -80,6 +80,7 @@ catalogue/API → resolver → media server → real decoder
 | Resolver `/frame` → `/embed/demo` → `/api/links/demo` | Iframe, API discovery and JSON response with a media link |
 | Resolver `/wrapper` → `/player?liveUrl=…` | AES-256-GCM wrapper with destination and expiry, followed by a URL parameter |
 | API `/session.pb` | Synthetic Protobuf message, ROT47 URL and session header; AES-256-CTR token inserted in the media path |
+| API `/bin/…` | Signed binary catalogue ([binary.py](../dev/lab/binary.py)): ROT47 JSON configuration whose keys hold `:`, naming the player origin every later request must send; a map of versions per request code, and catalogue and detail paths signed with the query's MD5 prefix and that version; Protobuf envelopes with repeated messages; country from a user message; ROT47 URL after a prefix; session sealed with AES-256-CTR under a key written as text, base64 percent-encoded into the media path |
 | Media `/public/master.m3u8` | Public HLS master → relative media playlist → relative MPEG-TS segments |
 | Media `/protected/master.m3u8` | Same clip with HMAC signature, expiry and mandatory headers on manifests and segments |
 | Media `/denied.m3u8` | Intentional HTTP 403 to test the alternative signal |
@@ -132,12 +133,13 @@ The tests verify:
 7. Protobuf/ROT47 decoding, valid AES-CTR session and rejection of a wrong session.
 8. Rejection of a tampered AES-GCM wrapper.
 9. Rate limit, subsequent success, 503 error, malformed JSON and redirect loop.
-10. Local TOML manifest and disabled direct profile with a consistent URL.
+10. Local TOML manifest and direct source file with a consistent URL.
 11. Live stream over HTTPS: three variants with the same segment numbering, mandatory headers, AES-128 key, decoding with FFmpeg and counters.
 12. Live stream: encoder restart with `EXT-X-DISCONTINUITY` and network outage, then recovery; stuck playlist, timestamps shifted slightly and numbering restarting from 0.
 13. Live stream with token: URL from `/live/resolve.json`, 403 after the token change, access without a token as before.
 14. A client stuck halfway through the TLS handshake does not block the other connections.
 15. Live stream as a continuous TS stream: response without a length, decoding with FFmpeg and closing during an outage.
+16. Signed binary catalogue: origin from the configuration, wrong signature refused, events and streams from repeated messages, an event without streams, session token in the path and a wrong one refused.
 
 The suite uses the [local decoders](../dev/lab/codecs.py) for the wrapper, the
 embedded data and the binary message. It imports no external research tools.

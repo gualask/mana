@@ -1,0 +1,15 @@
+# Not a CSS selector.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "frame"
+op = "html.attr"
+from = "<iframe>"
+selector = "iframe["
+attribute = "src"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

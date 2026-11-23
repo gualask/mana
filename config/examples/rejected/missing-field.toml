@@ -1,0 +1,6 @@
+# A source without `resolve`.
+id = "rejected"
+name = "A case to reject"
+
+[catalogue]
+items = [{ id = "a", title = "A" }]

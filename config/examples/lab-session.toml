@@ -1,0 +1,71 @@
+# Binary session: a Protobuf message with a ROT47 URL (after a prefix), an
+# AES key and IV; the session value in a response header, encrypted with
+# AES-256-CTR, goes base64url into the path as /token-….
+id = "lab-session"
+name = "Lab binary session"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[headers.media]
+User-Agent = "StreamLab/1"
+Referer = "http://127.0.0.1:8782/"
+X-Lab-Media = "synthetic"
+
+[catalogue]
+items = [{ id = "session", title = "Binary session" }]
+
+[[resolve.steps]]
+id = "answer"
+op = "http"
+url = "http://127.0.0.1:8781/session.pb"
+headers = "lab"
+
+[[resolve.steps]]
+id = "message"
+op = "protobuf"
+from = "{answer.body}"
+
+[[resolve.steps]]
+id = "raw"
+op = "rot47"
+from = "{message.1.0}"
+
+[[resolve.steps]]
+id = "url"
+op = "text.match"
+from = "{raw}"
+pattern = '^lab-v1::(.*)$'
+
+[[resolve.steps]]
+id = "sealed"
+op = "aes.encrypt"
+mode = "ctr"
+key = "{message.2.0}"
+iv = "{message.3.0}"
+data = "{answer.header.X-Lab-Session}"
+
+[[resolve.steps]]
+id = "token"
+op = "base64.encode"
+from = "{sealed}"
+alphabet = "url"
+padding = false
+
+[[resolve.steps]]
+id = "origin"
+op = "text.match"
+from = "{url}"
+pattern = '^(https?://[^/]+)'
+
+[[resolve.steps]]
+id = "path"
+op = "text.match"
+from = "{url}"
+pattern = '^https?://[^/]+(/.*)$'
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{origin}/token-{token}{path}"
+headers = "media"

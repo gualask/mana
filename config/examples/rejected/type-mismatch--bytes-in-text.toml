@@ -1,0 +1,13 @@
+# Bytes cannot be pasted into a text.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "raw"
+op = "hex.decode"
+from = "00ff"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8?k={raw}"

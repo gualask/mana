@@ -63,6 +63,29 @@ stream-header = { $file }: header senza `Nome: valore`
 stream-unknown-key = chiave sconosciuta in { $file }: { $key }
 stream-url-or-recipe = { $file }: serve `url` oppure una ricetta `resolve`, non entrambi
 
+## Source files
+
+source-format-at-line = non è TOML valido: riga { $line }: { $message }
+source-format = non è TOML valido: { $message }
+source-unknown-field = { $at }: campo `{ $field }` sconosciuto
+source-missing-field = { $at }: `{ $field }` mancante
+source-invalid-value = { $at }: `{ $field }` non valido: { $detail }
+source-unsupported-operation = { $at }: operazione `{ $op }` sconosciuta a questa versione di Mana
+source-one-of = { $at }: serve esattamente uno tra { $choices }
+source-unknown-reference = { $at }: `{ $reference }` non indica nulla che venga prima
+source-type-mismatch = { $at }: serve { $expected }, `{ $reference }` dà { $found }
+source-unknown-headers = { $at }: nessun insieme di header `{ $name }`
+source-unknown-resolver = { $at }: nessun resolver `{ $name }`
+source-unknown-recipe = { $at }: nessuna ricetta `{ $name }`
+source-call-inputs = { $at }: gli ingressi non sono quelli che la ricetta `{ $recipe }` indica
+source-duplicate-id = { $at }: un passo `{ $id }` viene prima
+source-equal-routes = { $at }: una route precedente ha lo stesso `when`
+source-call-cycle = la ricetta `{ $recipe }` richiama se stessa
+source-bad-pattern = { $at }: espressione non valida: { $detail }
+source-bad-selector = { $at }: selettore non valido: { $detail }
+source-wrong-output-list = { $at }: l'ultimo passo non dà una lista
+source-wrong-output-resolution = { $at }: l'ultimo passo non è `stream`, `next` o `call`
+
 ## Live streams
 
 live-unsupported = non supportato: { $cause }

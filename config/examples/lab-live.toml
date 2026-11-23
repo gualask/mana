@@ -1,0 +1,26 @@
+# RaiPlay shape: a JSON gives the URL to play with a token (needs --live).
+id = "lab-live"
+name = "Lab live with token"
+
+[headers.lab]
+User-Agent = "StreamLab/1"
+
+[headers.media]
+User-Agent = "StreamLab/1"
+Referer = "http://127.0.0.1:8782/"
+X-Lab-Media = "synthetic"
+
+[catalogue]
+items = [{ id = "live", title = "Live with token" }]
+
+[[resolve.steps]]
+id = "answer"
+op = "http"
+url = "http://127.0.0.1:8781/live/resolve.json"
+headers = "lab"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{answer.json.video.content_url}"
+headers = "media"
