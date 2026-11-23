@@ -1,5 +1,6 @@
-//! From a stream to play to a byte stream: the `.stream` file, the recipe that
-//! resolves it, and the HLS client that downloads it.
+//! From a stream to play to a byte stream: the stream at a known URL (a
+//! `.stream` file, a channel's URL, a source's resolution) and the HLS
+//! client that downloads it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -10,7 +11,6 @@ use crate::net;
 use crate::text;
 
 pub mod hls;
-pub mod recipe;
 pub mod playable;
 
 /// The quality the viewer asks for, among the variants of a master
@@ -102,7 +102,6 @@ impl Localized for Interruption {
 pub enum Cause {
     Network(net::Error),
     Playlist(hls::playlist::Error),
-    Recipe(recipe::Error),
     Playable(playable::Error),
     /// A segment that does not decrypt.
     Decryption(hls::decrypt::Error),
@@ -118,7 +117,6 @@ impl Localized for Cause {
         match self {
             Self::Network(error) => error.text(language),
             Self::Playlist(error) => error.text(language),
-            Self::Recipe(error) => error.text(language),
             Self::Playable(error) => error.text(language),
             Self::Decryption(hls::decrypt::Error::Length) => text!(language, "live-decryption-length"),
             Self::Decryption(hls::decrypt::Error::Padding) => text!(language, "live-decryption-padding"),

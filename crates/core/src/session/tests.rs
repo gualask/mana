@@ -190,34 +190,16 @@ fn a_refused_token_is_resolved_again_within_the_budget() {
 }
 
 #[test]
-fn a_master_refused_at_the_opening_has_the_recipe_run_again() {
-    // The recipe's first answer is a URL whose token expired already.
-    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    static RESOLVED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let (address, asked) = serve(|path| match path {
-        "/token" => {
-            let master = if RESOLVED.fetch_add(1, Ordering::SeqCst) == 0 { "expired" } else { "master" };
-            (200, format!("{}/{master}.m3u8", ADDRESS.get().unwrap()).into_bytes())
-        }
-        "/master.m3u8" => (200, MASTER.into()),
-        "/media.m3u8" => (200, b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\naudio.aac\n#EXT-X-ENDLIST\n".to_vec()),
-        "/audio.aac" => (200, packed_audio_segment()),
-        _ => (403, Vec::new()),
-    });
-    ADDRESS.set(address.clone()).unwrap();
+fn a_stream_file_with_a_recipe_is_refused_naming_its_key() {
     let dir = std::env::temp_dir().join(format!("mana-session-recipe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("recipe.stream");
-    std::fs::write(&path, format!("resolve = get {address}/token\n")).unwrap();
+    std::fs::write(&path, "resolve = get https://a.invalid/token\n").unwrap();
     let (open, _) = fake::open();
     let mut session = Session::new(open);
     session.play("recipe".into(), Program::Path(path), Settings::default()).unwrap();
-    // The segment arrives: the stream ends on its formats, not on the 403.
     let state = ended(&session);
-    assert_eq!(state, "Error: the stream has no video");
-    let asked = asked.lock().unwrap();
-    let paths: Vec<&str> = asked.iter().map(|a| a.path.as_str()).collect();
-    assert_eq!(paths, ["/token", "/expired.m3u8", "/token", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
+    assert!(state.ends_with("recipe.stream: resolve"), "{state}");
 }
 
 #[test]
@@ -286,8 +268,18 @@ fn a_channel_s_headers_go_with_every_request_of_its_stream() {
     }
 }
 
+/// An item of the source `text`, its `{ADDRESS}` the test server's.
+fn source_item(text: &str, address: &str, fields: &[(&str, &str)]) -> Program {
+    let source = crate::source::Source::from_toml(&text.replace("{ADDRESS}", address)).unwrap();
+    let fields = fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let item = crate::source::Item { fields };
+    Program::Source(Selection { source: Arc::new(source), item, device: "d-1".into() })
+}
+
+const MEDIA: &[u8] = b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\naudio.aac\n#EXT-X-ENDLIST\n";
+
 #[test]
-fn a_channel_s_recipe_runs_with_its_parameters_and_headers() {
+fn a_channel_s_source_resolves_its_item_with_the_device_and_its_headers() {
     // As Pluto's: the boot answer gives the host, the query and the token
     // the master URL is composed of.
     static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -297,25 +289,30 @@ fn a_channel_s_recipe_runs_with_its_parameters_and_headers() {
             (200, format!(r#"{{"servers":{{"stitcher":"{host}"}},"stitcherParams":"a=1%202","sessionToken":"t"}}"#).into_bytes())
         }
         "/stitch/c7/master.m3u8?a=1%202&jwt=t" => (200, MASTER.into()),
-        "/stitch/c7/media.m3u8" => (200, b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\naudio.aac\n#EXT-X-ENDLIST\n".to_vec()),
+        "/stitch/c7/media.m3u8" => (200, MEDIA.to_vec()),
         "/stitch/c7/audio.aac" => (200, packed_audio_segment()),
         _ => (404, Vec::new()),
     });
     ADDRESS.set(address.clone()).unwrap();
-    let lines = [
-        format!("get {address}/v4/start?clientID={{device}}&channelID={{id}}"),
-        "text {json:servers.stitcher}/stitch/{id}/master.m3u8?{json:stitcherParams}&jwt={json:sessionToken}".to_string(),
-    ];
-    let parameter = |name: &str| match name {
-        "id" => Some("c7".to_string()),
-        "device" => Some("d-1".to_string()),
-        _ => None,
-    };
-    let steps = crate::live::recipe::instantiate(&lines, parameter).unwrap();
-    let playable = Playable::recipe(steps, vec![("User-Agent".into(), "Mana-test".into())]);
+    let source = r#"
+id = "pluto"
+name = "Pluto"
+[headers.app]
+User-Agent = "Mana-test"
+[[resolve.steps]]
+id = "boot"
+op = "http"
+url = "{ADDRESS}/v4/start?clientID={input.device}&channelID={input.item.id}"
+headers = "app"
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{boot.json.servers.stitcher}/stitch/{input.item.id}/master.m3u8?{boot.json.stitcherParams}&jwt={boot.json.sessionToken}"
+headers = "app"
+"#;
     let (open, _) = fake::open();
     let mut session = Session::new(open);
-    session.play("Pluto".into(), Program::Live(playable), Settings::default()).unwrap();
+    session.play("Pluto".into(), source_item(source, &address, &[("id", "c7"), ("title", "Pluto")]), Settings::default()).unwrap();
     let state = ended(&session);
     assert_eq!(state, "Error: the stream has no video");
     let asked = asked.lock().unwrap();
@@ -326,15 +323,129 @@ fn a_channel_s_recipe_runs_with_its_parameters_and_headers() {
 }
 
 #[test]
-fn a_recipe_answer_over_the_limit_ends_without_retrying() {
+fn a_source_answer_over_the_limit_ends_without_retrying() {
     let (address, asked) = serve(|_| (200, vec![b' '; crate::net::MAX_TEXT_BYTES as usize + 1]));
-    let steps = vec![crate::live::recipe::Step::parse(&format!("get {address}/token")).unwrap()];
+    let source = "id = \"big\"\nname = \"Big\"\n[[resolve.steps]]\nid = \"token\"\nop = \"http\"\nurl = \"{ADDRESS}/token\"\n\
+                  [[resolve.steps]]\nid = \"stream\"\nop = \"stream\"\nurl = \"{token.text}\"\n";
     let (open, _) = fake::open();
     let mut session = Session::new(open);
-    session.play("big".into(), Program::Live(Playable::recipe(steps, Vec::new())), Settings::default()).unwrap();
+    session.play("big".into(), source_item(source, &address, &[("id", "x")]), Settings::default()).unwrap();
     let state = ended(&session);
     assert!(state.contains("/token: answer over"), "{state}");
     assert_eq!(asked.lock().unwrap().len(), 1);
+}
+
+/// Three signals: one the API refuses to resolve, one whose media is
+/// refused, one that plays.
+const SIGNALS: &str = r#"
+id = "events"
+name = "Events"
+[[sources.steps]]
+id = "detail"
+op = "http"
+url = "{ADDRESS}/event.json"
+[[sources.steps]]
+id = "signals"
+op = "list.map"
+list = "{detail.json}"
+item = { id = "{item}" }
+[[resolve.steps]]
+id = "link"
+op = "http"
+url = "{ADDRESS}/link/{input.candidate.id}"
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{link.text}"
+"#;
+
+#[test]
+fn the_next_candidate_plays_when_one_does_not_resolve_or_its_media_is_refused() {
+    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let (address, asked) = serve(|path| match path {
+        "/event.json" => (200, br#"["closed", "denied", "open"]"#.to_vec()),
+        "/link/closed" => (403, Vec::new()),
+        "/link/denied" => (200, format!("{}/denied.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        "/link/open" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        "/master.m3u8" => (200, MASTER.into()),
+        "/media.m3u8" => (200, MEDIA.to_vec()),
+        "/audio.aac" => (200, packed_audio_segment()),
+        _ => (403, Vec::new()),
+    });
+    ADDRESS.set(address.clone()).unwrap();
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1"), ("title", "Event")]), Settings::default()).unwrap();
+    assert_eq!(ended(&session), "Error: the stream has no video");
+    let asked = asked.lock().unwrap();
+    let paths: Vec<&str> = asked.iter().map(|a| a.path.as_str()).collect();
+    // The refused media is resolved again within the budget, then left.
+    let denied = 1 + reopen::MAX_REOPENINGS;
+    assert_eq!(paths.iter().filter(|p| **p == "/denied.m3u8").count(), denied);
+    assert_eq!(paths.iter().filter(|p| **p == "/link/denied").count(), denied);
+    assert_eq!(paths[..2], ["/event.json", "/link/closed"]);
+    assert_eq!(paths[paths.len() - 4..], ["/link/open", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
+}
+
+#[test]
+fn an_unreachable_candidate_gives_way_to_the_next_after_a_few_attempts() {
+    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static CLOSED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    // A port nothing listens on: every connection is refused.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    CLOSED.set(format!("http://{closed}/master.m3u8")).unwrap();
+    let (address, asked) = serve(|path| match path {
+        "/event.json" => (200, br#"["unreachable", "open"]"#.to_vec()),
+        "/link/unreachable" => (200, CLOSED.get().unwrap().clone().into_bytes()),
+        "/link/open" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        "/master.m3u8" => (200, MASTER.into()),
+        "/media.m3u8" => (200, MEDIA.to_vec()),
+        "/audio.aac" => (200, packed_audio_segment()),
+        _ => (404, Vec::new()),
+    });
+    ADDRESS.set(address.clone()).unwrap();
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    let started = Instant::now();
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
+    assert_eq!(ended(&session), "Error: the stream has no video");
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    let paths: Vec<String> = asked.lock().unwrap().iter().map(|a| a.path.clone()).collect();
+    assert_eq!(paths, ["/event.json", "/link/unreachable", "/link/open", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
+}
+
+#[test]
+fn a_refused_token_has_the_source_resolve_the_candidate_again() {
+    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static TOKENS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let (address, asked) = serve(|path| match path {
+        "/event.json" => (200, br#"["one"]"#.to_vec()),
+        "/link/one" => {
+            let token = TOKENS.fetch_add(1, Ordering::Relaxed);
+            (200, format!("{}/master.m3u8?t={token}", ADDRESS.get().unwrap()).into_bytes())
+        }
+        "/master.m3u8?t=0" => (403, Vec::new()),
+        "/master.m3u8?t=1" => (200, MASTER.into()),
+        "/media.m3u8" => (200, MEDIA.to_vec()),
+        "/audio.aac" => (200, packed_audio_segment()),
+        _ => (404, Vec::new()),
+    });
+    ADDRESS.set(address.clone()).unwrap();
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
+    assert_eq!(ended(&session), "Error: the stream has no video");
+    let paths: Vec<String> = asked.lock().unwrap().iter().map(|a| a.path.clone()).collect();
+    assert_eq!(paths[..5], ["/event.json", "/link/one", "/master.m3u8?t=0", "/link/one", "/master.m3u8?t=1"]);
+}
+
+#[test]
+fn an_item_without_candidates_ends_saying_so() {
+    let (address, _) = serve(|_| (200, b"[]".to_vec()));
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
+    assert_eq!(ended(&session), "Error: sources: no streams for now");
 }
 
 #[test]

@@ -6,8 +6,8 @@ capabilities already available. **A new provider must not, by default, mean
 a new Rust module.** This document defines the source file: what belongs in
 it, its contract, how it runs, and what is not built yet. The contract is
 read and checked by [`source/`](../crates/core/src/source/mod.rs) and run
-by [`source/run/`](../crates/core/src/source/run/mod.rs); the apps do not
-use sources yet ([Not built yet](#not-built-yet)).
+by [`source/run/`](../crates/core/src/source/run/mod.rs); the channel list
+names sources ([Channel list](channel-list.md#format)).
 
 ## What belongs in the files
 
@@ -175,7 +175,7 @@ itself is a limit.
 
 The engine does not check the media: whether the stream plays is the
 player's to say, and trying the next candidate when it does not is the
-session's, not built yet.
+session's ([Channel list](channel-list.md#playing-a-channel-with-a-source)).
 
 ## Composable resolvers
 
@@ -243,9 +243,8 @@ duplicate keys are a TOML error.
 ## Not built yet
 
 - JSON import into the same `Source`, with the file in the errors.
-- The channel list naming a source (`source = "rai"`) in place of the
-  provisional [recipe steps](channel-list.md#recipe-steps), and the session
-  resolving it and trying the next candidate.
+- A source's catalogue as channels or events in the interface, and choosing
+  among an event's signals ([Next steps](todo.md)).
 - Catalogue pagination: no case has needed it.
 
 The order is in [Next steps](todo.md).

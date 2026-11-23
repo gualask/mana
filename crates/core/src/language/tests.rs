@@ -58,7 +58,6 @@ fn variables_fill_in_without_marks_and_counts_select_the_plural() {
     assert_eq!(crate::text!(Language::Italian, "settings-channels", count = 1), "1 canale");
     assert_eq!(crate::text!(Language::Italian, "settings-channels", count = 0), "0 canali");
     assert_eq!(crate::text!(Language::Italian, "notice-test-list", file = "/tmp/a.m3u"), "La TV usa la lista di prova /tmp/a.m3u");
-    assert_eq!(crate::text!(Language::English, "recipe-unclosed"), "`{json:` without `}`");
     assert_eq!(crate::text!(Language::English, "home-position", focus = 5000, count = 12_000), "5000 of 12000");
     assert_eq!(crate::text!(Language::English, "net-empty", path = "/a.m3u8"), "/a.m3u8: empty answer");
     assert_eq!(message(Language::Italian, "no-such-message", &[]), "no-such-message");

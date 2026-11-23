@@ -4,6 +4,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::reopen::MAX_REOPENINGS;
+use crate::source;
 use crate::language::{Language, Localized, display_in_english};
 use crate::live::playable;
 use crate::live::{Cause, Interruption, Quality};
@@ -56,6 +57,8 @@ pub enum Failure {
     RefusedAgain(Cause),
     /// The viewing's thread could not start, as the system says.
     Thread(String),
+    /// A source gave nothing to play: no candidate, or none that resolved.
+    Source(source::run::Failure),
 }
 
 impl From<playback::Error> for Failure {
@@ -74,6 +77,7 @@ impl Localized for Failure {
                 text!(language, "live-refused-again", count = MAX_REOPENINGS, cause = cause.text(language))
             }
             Self::Thread(detail) => detail.clone(),
+            Self::Source(failure) => failure.text(language),
         }
     }
 }

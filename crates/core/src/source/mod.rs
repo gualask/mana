@@ -8,6 +8,7 @@
 //! model TOML and JSON share, so both give the same `Source`.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -107,10 +108,33 @@ impl Source {
             let line = error.span().map(|span| text.as_bytes()[..span.start.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1);
             Error::Format { line, message: error.message().trim().to_string() }
         })?;
-        let source = read(&value)?;
+        Self::from_value(&value)
+    }
+
+    /// The source a channel list writes as `[sources.NAME]`, read into the
+    /// data model TOML and JSON share: NAME is its `id`, and its `name`
+    /// when it gives none.
+    pub fn from_list(name: &str, value: &Value) -> Result<Self, Error> {
+        let mut table = value.as_object().cloned().ok_or_else(|| Error::invalid(name, "", "not a table"))?;
+        table.entry("id").or_insert_with(|| name.into());
+        table.entry("name").or_insert_with(|| name.into());
+        Self::from_value(&Value::Object(table))
+    }
+
+    fn from_value(value: &Value) -> Result<Self, Error> {
+        let source = read(value)?;
         validate::check(&source)?;
         Ok(source)
     }
+}
+
+/// An item of a source chosen to play: what the session resolves, on the
+/// device `device`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Selection {
+    pub source: Arc<Source>,
+    pub item: Item,
+    pub device: String,
 }
 
 fn read(value: &Value) -> Result<Source, Error> {

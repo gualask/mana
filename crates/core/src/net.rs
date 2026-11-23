@@ -20,7 +20,7 @@ use crate::text;
 /// value: room for a JWT or a session cookie, well within the 8 KB a
 /// server usually takes for a line.
 pub const MAX_LINE_VALUE: usize = 4096;
-/// The largest text document read: a playlist, the JSON a recipe reads, a
+/// The largest text document read: a playlist, an answer a source reads, a
 /// channel list or an M3U list it includes. RaiPlay's playlists are 242 KB,
 /// a two-hour window of 2 s segments is about 0.6 MB.
 pub const MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;

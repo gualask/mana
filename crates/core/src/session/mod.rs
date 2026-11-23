@@ -19,6 +19,7 @@ use crate::live::QualityChoice;
 use crate::live::playable::Playable;
 use crate::log::log;
 use crate::playback::{BackendError, OpenBackend, Settings};
+use crate::source::Selection;
 pub use crate::live::Quality;
 pub use crate::live::playable::EXTENSION as STREAM_EXTENSION;
 pub use stats::{Failure, State, Stats};
@@ -30,6 +31,9 @@ pub enum Program {
     Path(PathBuf),
     /// A live stream, as a channel list gives it.
     Live(Playable),
+    /// An item of a source: resolved when it opens, its candidates tried
+    /// in order.
+    Source(Selection),
 }
 
 pub struct Session {

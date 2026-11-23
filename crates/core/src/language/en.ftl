@@ -29,16 +29,13 @@ channel-no-stream = the list gives no stream for it
 channel-no-name = channel without `{ $key }`
 channel-not-text = `{ $key }` is not a text
 channel-bad-url = invalid `{ $key }`: { $detail }
-channel-url-and-recipe = channel with both `{ $url }` and `{ $recipe }`
-channel-no-url-or-recipe = channel without `{ $url }` or `{ $recipe }`
-channel-unknown-recipe = recipe { $name } does not exist
-channel-recipe = recipe { $name }: { $problem }
+channel-url-and-source = channel with both `{ $url }` and `{ $source }`
+channel-no-url-or-source = channel without `{ $url }` or `{ $source }`
+channel-unknown-source = source { $name } does not exist
+channel-source = source { $name }: { $problem }
+channel-header-with-source = `{ $key }` on a channel with a source: the source gives the headers
 channel-header-not-text = header { $name } is not a text
 channel-header-not-table = `{ $key }` is not a table
-channel-recipe-not-table = not a table
-channel-recipe-steps-not-list = `{ $key }` is not a list
-channel-recipe-no-steps = without `{ $key }`
-channel-recipe-step-not-text = a step is not a text
 
 ## Network
 
@@ -46,24 +43,11 @@ net-status = HTTP { $code } for { $path }
 net-oversized = { $path }: answer over { $limit } bytes
 net-empty = { $path }: empty answer
 
-## Recipes and stream files
+## Stream files
 
-recipe-invalid-step = invalid step: { $step }
-recipe-missing-parameter = parameter { $name } missing
-recipe-too-many-steps = recipe of { $count } steps, at most { $max }
-recipe-step = step { $number } ({ $step }): { $problem }
-recipe-not-url = result is not a URL: { $detail }
-recipe-no-url-at-end = the recipe does not end with a URL
-recipe-no-url = no URL to download
-recipe-neither-json-nor-text = answer neither JSON nor text
-recipe-missing-field = field { $path } missing
-recipe-field-not-text = field { $path } is not a text
-recipe-unclosed = `{ "{" }json:` without `{ "}" }`
-recipe-not-json = the current value is not JSON
-recipe-unexpected-value = the current value is not of the expected type
 stream-header = { $file }: header without `Name: value`
 stream-unknown-key = unknown key in { $file }: { $key }
-stream-url-or-recipe = { $file }: needs `url` or a `resolve` recipe, not both
+stream-no-url = { $file }: needs `url`
 
 ## Source files
 

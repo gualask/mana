@@ -1,7 +1,7 @@
 # Channel list
 
 The channel list of the [TV app](tv-app.md): how it is set, its TOML format
-and the recipe steps that resolve a channel. Mana contains no channels and
+and how a channel with a source is played. Mana contains no channels and
 no list URL: each user provides their own.
 
 ## Setting it from the phone
@@ -30,19 +30,20 @@ start.
 ## Format
 
 ```toml
-[recipes.example]
-steps = [
-  "get https://tv.invalid/live/{id}.json",
-  "json video.content_url",
-  "query format=hls",
-  "get",
-  "json video.0",
-]
+[sources.example]                  # the key is the source's id
+[[sources.example.resolve.steps]]
+id = "live"
+op = "http"
+url = "https://tv.invalid/live/{input.item.id|component}.json"
+[[sources.example.resolve.steps]]
+id = "stream"
+op = "stream"
+url = "{live.json.video.content_url}"
 
 [[channels]]
 name = "Channel 1"
 logo = "https://tv.invalid/logos/channel1.png"  # optional, like `group`
-recipe = "example"
+source = "example"
 id = "channel1"
 
 [[channels]]
@@ -55,31 +56,36 @@ m3u = "https://lists.invalid/channels.m3u"
 ```
 
 Channels and included M3U lists appear in file order. A channel has `name`
-and exactly one of `url` and `recipe`; its other fields are the recipe's
-parameters, written `{field}` in the steps (`{id}` above), and `{device}` is a UUID created
-when first needed and kept in `/media/developer/mana/device`. The keys
-are in English: a list written with the Italian keys of the first versions
-(`canali` at the root) is refused, with an error that names `channels`; the
-other old keys are unknown fields like any other. An unknown field is
-ignored; a channel with no name, with both or neither of `url` and `recipe`,
-with a nonexistent recipe or an unknown step stays in the list as
-unavailable, with the reason in the log
-([list.rs](../crates/core/src/catalog/list.rs)). An included list that
-cannot be downloaded uses its copy, otherwise it is skipped. The entries of
-an M3U list can declare headers (`#EXTVLCOPT:http-user-agent=`,
+and exactly one of `url` and `source`. A source is a
+[source file](configuration.md#source-files) written under
+`[sources.NAME]`: NAME is its id, and its name when it gives none. A
+channel with a source is an item of it: `title` is the channel's name, and
+its other fields (`id` above) are the item's, read as `{input.item.id}`;
+`{input.device}` is a UUID created when a channel with a source is first
+read and kept in `/media/developer/mana/device`. The source gives the
+headers of its requests and streams, so such a channel has no `header`.
+
+The keys are in English: a list written with the Italian keys of the first
+versions (`canali` at the root) is refused, with an error that names
+`channels`; the other old keys are unknown fields like any other. An
+unknown field is ignored; a channel with no name, with both or neither of
+`url` and `source`, with a source the list does not define or one that
+breaks the contract stays in the list as unavailable, with the reason in
+the log ([list.rs](../crates/core/src/catalog/list.rs)). An included list
+that cannot be downloaded uses its copy, otherwise it is skipped. The
+entries of an M3U list can declare headers (`#EXTVLCOPT:http-user-agent=`,
 `#EXTVLCOPT:http-referrer=`, `url|User-Agent=…&Referer=…`), sent with every
 request of the channel ([m3u.rs](../crates/core/src/catalog/m3u.rs)).
 
-## Recipe steps
+## Playing a channel with a source
 
-A recipe is a provisional form, which
-[source files](configuration.md#source-files) will replace. The steps are run on the TV at every opening, each on the result of
-the previous one ([recipe.rs](../crates/core/src/live/recipe.rs)):
-
-- `get [URL]`: downloads the URL, or the one produced by the previous step;
-- `json field.0`: extracts a value from the JSON;
-- `query name=value`: sets a query parameter of the URL;
-- `text TEMPLATE`: builds a text, with `{json:field.0}` taken from the JSON.
-
-The same steps, written `resolve = …`, apply in
-[`.stream`](tv-app.md#files-and-settings-on-the-tv) files.
+When the channel opens, the session asks the source for the item's
+candidates (the item itself without `sources`) and tries them in order:
+each is resolved and its stream opened; one that does not resolve, or whose
+stream cannot be opened or plays no more, gives way to the next. While
+another candidate waits, an unreachable stream gives way after 3 attempts
+a second apart, as Media3 gives up a playlist; the last candidate, as a
+channel with a URL, is tried until the network is back. A token
+refused while watching has the same candidate resolved again, within the
+budget of reopenings ([reopen.rs](../crates/core/src/session/reopen.rs)).
+When no candidate plays, playback ends with the last reason.

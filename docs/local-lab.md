@@ -10,8 +10,7 @@ providers. The scenarios are defined by protocol and behaviour.
 contract/integration tests. The lab's chains are written as source files
 in [`config/examples/`](../config/examples/), which Mana's engine runs in
 `cargo test` against a network that answers as the lab does
-([run/tests.rs](../crates/core/src/source/run/tests.rs)); the apps do not
-use sources yet ([Configuration and extensions](configuration.md#not-built-yet)). The media server can already be
+([run/tests.rs](../crates/core/src/source/run/tests.rs)). The media server can already be
 attached to an HLS player to verify transport and decoding.
 
 ## Start and playback
@@ -163,9 +162,9 @@ moves the time past the expiry without waiting. The old URL returns
 403 `token_expired`; reading the resolver again returns a new link.
 This verifies recovery between requests. Renewal in the middle of a
 live stream is instead tested on the TV with the token of the first live channel
-(`/live/resolve.json` and `POST /control/live-token`): the app, which resolves it with
-the provisional recipe of its `.stream` file, receives 403 and resolves
-the source again.
+(`/live/resolve.json` and `POST /control/live-token`): the app, playing a
+channel whose source reads that JSON (as [lab-live](../config/examples/lab-live.toml),
+with the lab's addresses), receives 403 and resolves the candidate again.
 
 ## Moving to player e2e tests
 
@@ -173,8 +172,7 @@ The lab stays outside the core, as described in [Modular architecture](architect
 Error classes and protocols are described by behaviour, so the
 fixtures stay useful for future providers too.
 
-When the runtime exists, the e2e tests will have to use its TOML loader,
-its models, resolvers and session handling. The test will have to import
+The e2e tests will have to use the engine, its models and the session. The test will have to import
 a local profile, get the catalogue, select an event, apply the
 fallback and verify playback, then force expiry/renewal or a channel
 change. The test client will be replaced by the application, keeping the
@@ -185,7 +183,7 @@ possible to map the assigned ports to the profiles during the test.
 |---|---|
 | Fixture/parser contract and HTTP integration | Implemented in the suite |
 | Real decoder with synthetic media over HTTP | Implemented with FFmpeg |
-| TOML loading and execution of Mana recipes | To implement in the runtime; on the TV only the provisional recipe of the `.stream` files runs |
+| Execution of source files | The engine in `cargo test` on every example; channels with a source in the app |
 | E2e of the Mana session and UI | To connect to the runtime |
 | Decoder, remote control, HLS with headers and webOS lifecycle | Verified on the TV ([checks](tv-app.md#verification-on-the-b1)) |
 

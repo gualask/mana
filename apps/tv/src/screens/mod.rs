@@ -26,7 +26,7 @@ use gfx::{Color, IMAGE_SLOTS, Renderer};
 use language::Languages;
 pub use loader::REDRAW as LOADER_REDRAW;
 use logos::Logos;
-use mana_core::catalog::{Channel, ChannelError};
+use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::catalog::update::{self, Updater};
 use mana_core::language::{Language, Localized};
 use mana_core::session::{Failure, Program, Session, Stats};
@@ -245,8 +245,11 @@ impl App {
     /// Plays the focused channel; the reason it cannot be played, if so.
     fn play_focused_channel(&mut self) -> Result<(), ChannelError> {
         let Some(channel) = self.channels.focused() else { return Ok(()) };
-        let source = channel.play.clone()?;
-        self.start(channel.title(self.languages.current()).to_string(), Program::Live(source));
+        let program = match channel.play.clone()? {
+            Play::Stream(playable) => Program::Live(playable),
+            Play::Source(selection) => Program::Source(selection),
+        };
+        self.start(channel.title(self.languages.current()).to_string(), program);
         Ok(())
     }
 

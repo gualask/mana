@@ -67,17 +67,17 @@ While watching:
 ## Status
 
 Mana is a personal project, still in development: it is tested on a single
-TV, an LG OLED B1, and not yet on other models. Development continues with a
-more complete recipe system for sources and a desktop app.
+TV, an LG OLED B1, and not yet on other models. Development continues with
+the sources' catalogues and events in the interface, and a desktop app.
 
 ## Technical documentation
 
 - [TV app](docs/tv-app.md): build, package checks, files and settings, playback, verification.
-- [Channel list](docs/channel-list.md): setup from the phone, format and recipes.
+- [Channel list](docs/channel-list.md): setup from the phone, format and sources.
 - [Development](docs/development.md): requirements, lab, checks and repository structure.
 - [Next steps and open questions](docs/todo.md): development sequence and completion criteria.
 - [Modular architecture](docs/architecture.md): contracts, dependencies, session and backends.
-- [Configuration and extensions](docs/configuration.md): TOML, operations and composable resolvers.
+- [Configuration and extensions](docs/configuration.md): source files, their operations and how they run.
 - [HLS live edge cases](docs/hls-cases.md): comparison with hls.js and Media3.
 - [Synthetic lab](docs/local-lab.md): endpoints, scenarios, expiry and tests.
 - [Sources](docs/sources/README.md): documentation consulted, TV CPUs and libraries, performance.

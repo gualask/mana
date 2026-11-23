@@ -71,22 +71,13 @@ via SSH as root, it must be made writable (`mkdir -m 777`). If
 `/tmp/mana-autoplay` contains the name of one of these files, or of a
 channel from the [channel list](channel-list.md), the app plays it at start.
 
-A `.stream` file contains a line `url = …`, or the steps of a
-[recipe](channel-list.md#recipe-steps) written as `resolve = …` and run on
-the TV at every opening, one line `header = Name: value` for each header
-and, optionally, `ca = file.pem`. A header that a request cannot carry, here
-or in an M3U list (invalid name, control or non-ASCII characters, value over
-4096 bytes), is dropped with a log warning that gives its name
-([playable.rs](../crates/core/src/live/playable.rs)). For example, a channel
-whose website describes the live stream in a JSON opens like this:
-
-```text
-resolve = get https://tv.invalid/live/channel1.json
-resolve = json video.content_url
-resolve = query format=hls
-resolve = get
-resolve = json video.0
-```
+A `.stream` file contains a line `url = …`, one line `header = Name: value`
+for each header and, optionally, `ca = file.pem`; a stream that must be
+resolved first is a channel with a [source](channel-list.md#format). A
+header that a request cannot carry, here or in an M3U list (invalid name,
+control or non-ASCII characters, value over 4096 bytes), is dropped with a
+log warning that gives its name
+([playable.rs](../crates/core/src/live/playable.rs)).
 
 Settings live in `/media/developer/mana/mana.conf`, which persists, and in
 `/tmp/mana.conf`, for tests, which overrides it
@@ -264,7 +255,7 @@ numbering restarted lower), and when the pipeline fails, for example shows
 no frames for 15 s. Reopening reuses the variant playlists already read: on
 RaiPlay the master's token expires after 150 s, that of the playlists and
 segments after 24 h. If a playlist or a segment answers 401, 403 or 410
-(expired token), the source is instead resolved again. Pipeline failures and
+(expired token), a channel with a source is instead resolved again. Pipeline failures and
 new resolutions are allowed at most 6 times in 5 minutes, then playback
 closes with the error.
 

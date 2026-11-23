@@ -27,16 +27,13 @@ channel-no-stream = la lista non dà il suo indirizzo
 channel-no-name = canale senza `{ $key }`
 channel-not-text = `{ $key }` non è un testo
 channel-bad-url = `{ $key }` non valido: { $detail }
-channel-url-and-recipe = canale con sia `{ $url }` sia `{ $recipe }`
-channel-no-url-or-recipe = canale senza `{ $url }` né `{ $recipe }`
-channel-unknown-recipe = ricetta { $name } inesistente
-channel-recipe = ricetta { $name }: { $problem }
+channel-url-and-source = canale con sia `{ $url }` sia `{ $source }`
+channel-no-url-or-source = canale senza `{ $url }` né `{ $source }`
+channel-unknown-source = fonte { $name } inesistente
+channel-source = fonte { $name }: { $problem }
+channel-header-with-source = `{ $key }` su un canale con una fonte: gli header li dà la fonte
 channel-header-not-text = header { $name } non è un testo
 channel-header-not-table = `{ $key }` non è una tabella
-channel-recipe-not-table = non è una tabella
-channel-recipe-steps-not-list = `{ $key }` non è un elenco
-channel-recipe-no-steps = senza `{ $key }`
-channel-recipe-step-not-text = un passo non è un testo
 
 ## Network
 
@@ -44,24 +41,11 @@ net-status = HTTP { $code } per { $path }
 net-oversized = { $path }: risposta oltre { $limit } byte
 net-empty = { $path }: risposta vuota
 
-## Recipes and stream files
+## Stream files
 
-recipe-invalid-step = passo non valido: { $step }
-recipe-missing-parameter = parametro { $name } mancante
-recipe-too-many-steps = ricetta di { $count } passi, al massimo { $max }
-recipe-step = passo { $number } ({ $step }): { $problem }
-recipe-not-url = risultato non è un URL: { $detail }
-recipe-no-url-at-end = la ricetta non termina con un URL
-recipe-no-url = nessun URL da scaricare
-recipe-neither-json-nor-text = risposta né JSON né testo
-recipe-missing-field = campo { $path } assente
-recipe-field-not-text = campo { $path } non è un testo
-recipe-unclosed = `{ "{" }json:` senza `{ "}" }`
-recipe-not-json = il valore corrente non è JSON
-recipe-unexpected-value = il valore corrente non è del tipo atteso
 stream-header = { $file }: header senza `Nome: valore`
 stream-unknown-key = chiave sconosciuta in { $file }: { $key }
-stream-url-or-recipe = { $file }: serve `url` oppure una ricetta `resolve`, non entrambi
+stream-no-url = { $file }: serve `url`
 
 ## Source files
 

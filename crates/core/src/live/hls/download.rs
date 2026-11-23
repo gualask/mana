@@ -21,11 +21,10 @@ use super::ladder::Ladder;
 use super::playlist::{self, parse_master, text};
 use super::ts;
 use super::stream::{Chunk, HlsStream, Stop};
-use crate::live::recipe;
 use crate::live::playable::Playable;
 use crate::live::{Cause, Interruption, QualityChoice, Stats};
 use crate::log::log;
-use crate::net::{self, Client, loggable};
+use crate::net::{self, Client};
 
 /// Downloaded segments waiting for the demuxer, each of at most
 /// segment::MAX_BYTES.
@@ -60,25 +59,27 @@ enum Media {
 }
 
 impl Live {
-    /// Resolves the stream's recipe, if any, and tells what its URL serves:
+    /// Tells what the stream's URL serves:
     /// a master playlist, whose variants and audio rendition it chooses,
     /// following the viewer's `choice` of quality, or a continuous stream.
-    /// Blocks until then, retrying network errors; returns None when
-    /// stopped meanwhile. A refused token is an interruption of its own:
-    /// the session may resolve the stream again.
+    /// Blocks until then, retrying network errors, `attempts` times at most
+    /// when given; returns None when stopped meanwhile. A refused token is an interruption of its own:
+    /// the session may resolve the stream again. The stream's credentials
+    /// go only to the origin of its URL.
     pub fn resolve(
         playable: &Playable,
         stop: &Stop,
         stats: Arc<Mutex<Stats>>,
         choice: &QualityChoice,
+        attempts: Option<u32>,
     ) -> Result<Option<Self>, Interruption> {
-        let named = playable.named_urls().map_err(|e| Interruption::Failed(Cause::Playable(e)))?;
+        let named = [playable.url.clone()];
         let client = Client::for_source(playable.headers.clone(), &named, playable.root_certificate.as_deref())
             .map_err(|e| Interruption::Failed(Cause::Client(e)))?;
         let mut reader = Downloader::new(client.clone(), "stream");
-        let Some(master) = master_url(playable, &mut reader, stop)? else { return Ok(None) };
-        let served = |d: &mut Downloader| served(d.client(), &master, choice, &stats);
-        let Some(media) = reader.retry(stop, None, served).map_err(interruption)? else {
+        let master = &playable.url;
+        let served = |d: &mut Downloader| served(d.client(), master, choice, &stats);
+        let Some(media) = reader.retry(stop, attempts, served).map_err(interruption)? else {
             return Ok(None);
         };
         Ok(Some(Self { client, media }))
@@ -103,18 +104,6 @@ impl Live {
             }
         }
     }
-}
-
-/// The URL `playable` gives, or its recipe ends on; None when stopped.
-fn master_url(playable: &Playable, reader: &mut Downloader, stop: &Stop) -> Result<Option<Url>, Interruption> {
-    if let Some(url) = &playable.url {
-        return Ok(Some(url.clone()));
-    }
-    let master = run_recipe(reader, &playable.resolve, stop).map_err(interruption)?;
-    if let Some(master) = &master {
-        log!("stream resolved: {}", loggable(master));
-    }
-    Ok(master)
 }
 
 /// Why resolving a stream failed, as the session tells the failures apart.
@@ -158,18 +147,6 @@ fn download(downloader: &mut Downloader, playlist: &Url, first: Option<Fetched>,
     };
     log!("hls: {interruption}");
     stop.interrupt(interruption);
-}
-
-/// The URL the recipe `steps` end on. Network errors are retried as for
-/// playlists; a recipe that does not fit the answers is an error of its
-/// own. None when stopped.
-fn run_recipe(reader: &mut Downloader, steps: &[recipe::Step], stop: &Stop) -> Result<Option<Url>, Failure> {
-    reader.retry(stop, None, |d| {
-        recipe::run(steps, |url| d.client().get(url, net::MAX_TEXT_BYTES)).map_err(|e| {
-            let failure = e.network().map_or(Failure::Unsupported as fn(Cause) -> Failure, Failure::of_network);
-            failure(Cause::Recipe(e))
-        })
-    })
 }
 
 /// What `master` serves, told by its first bytes. A playlist gives the

@@ -10,6 +10,7 @@ use std::borrow::Cow;
 
 use crate::language::Language;
 use crate::live::playable::Playable;
+use crate::source::Selection;
 use crate::text;
 pub use list::ChannelError;
 
@@ -23,7 +24,16 @@ pub struct Channel {
     pub group: Option<String>,
     /// What it plays, or why it cannot be played: the list gives no stream,
     /// or a broken one.
-    pub play: Result<Playable, ChannelError>,
+    pub play: Result<Play, ChannelError>,
+}
+
+/// What a channel plays.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Play {
+    /// A stream at a URL the list gives.
+    Stream(Playable),
+    /// An item of a source, which the session resolves when it opens.
+    Source(Selection),
 }
 
 impl Channel {

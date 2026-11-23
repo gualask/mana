@@ -27,7 +27,7 @@ const M3U_COPY: &str = ".m3u";
 /// Unavailable channels named in the log, before only counting them.
 const LOGGED_UNAVAILABLE: usize = 10;
 
-/// The copies in their folder, and the device identifier for the recipes.
+/// The copies in their folder, and the device identifier for the sources.
 pub(super) struct Copies {
     dir: PathBuf,
     device: Arc<Device>,

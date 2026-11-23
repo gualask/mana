@@ -1,5 +1,6 @@
-//! Mana's channel list, in TOML: recipes defined once (`[recipes.NAME]`),
-//! channels with a URL or a recipe and its parameters (`[[channels]]`), and
+//! Mana's channel list, in TOML: sources defined once (`[sources.NAME]`,
+//! docs/configuration.md), channels with a URL or a source and the fields
+//! its flows read (`[[channels]]`), and
 //! whole M3U lists included where they appear (`[[include]]`). A list
 //! that is not TOML is refused as a whole, and so is one with the Italian
 //! keys of the first versions; a broken channel stays in it, unavailable
@@ -7,23 +8,21 @@
 //! that the list can grow without a new app.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 use url::Url;
 
-use super::Channel;
+use super::{Channel, Play};
 use crate::language::{Language, Localized, display_in_english};
-use crate::live::recipe;
 use crate::live::playable::Playable;
+use crate::source::{self, Item, Selection, Source};
 use crate::text;
 
-/// The parameter that gives the installation's device identifier.
-pub const DEVICE_PARAMETER: &str = "device";
 /// The keys of the format, which its error messages name too.
 mod key {
-    pub const RECIPES: &str = "recipes";
-    pub const STEPS: &str = "steps";
+    pub const SOURCES: &str = "sources";
     pub const CHANNELS: &str = "channels";
     pub const INCLUDE: &str = "include";
     pub const M3U: &str = "m3u";
@@ -31,14 +30,16 @@ mod key {
     pub const LOGO: &str = "logo";
     pub const GROUP: &str = "group";
     pub const URL: &str = "url";
-    pub const RECIPE: &str = "recipe";
+    pub const SOURCE: &str = "source";
     pub const HEADER: &str = "header";
     /// The root key of the lists written for the first versions, with
     /// Italian keys.
     pub const ITALIAN_CHANNELS: &str = "canali";
 }
-/// A channel's fields that are not parameters of its recipe.
-const CHANNEL_FIELDS: [&str; 6] = [key::NAME, key::LOGO, key::GROUP, key::URL, key::RECIPE, key::HEADER];
+/// A channel's fields that are not fields of the item its source reads.
+const CHANNEL_FIELDS: [&str; 6] = [key::NAME, key::LOGO, key::GROUP, key::URL, key::SOURCE, key::HEADER];
+/// The item's field that holds the channel's name.
+const TITLE: &str = "title";
 
 /// Why a list was refused as a whole.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,26 +73,17 @@ pub enum ChannelError {
     NotText(String),
     /// A `url` that does not parse, as the url crate says.
     BadUrl(String),
-    BothUrlAndRecipe,
-    NeitherUrlNorRecipe,
-    /// A recipe the list does not define.
-    UnknownRecipe(String),
-    /// A recipe defined in a way that cannot be used.
-    BrokenRecipe { name: String, problem: RecipeProblem },
-    /// A recipe whose steps do not fit the channel.
-    Recipe { name: String, error: recipe::Error },
+    BothUrlAndSource,
+    NeitherUrlNorSource,
+    /// A source the list does not define.
+    UnknownSource(String),
+    /// A source that does not keep the contract, as its checks say.
+    BrokenSource { name: String, error: source::Error },
+    /// Headers on a channel with a source: they are the source's to give.
+    HeaderWithSource,
     /// A header that is not a text.
     HeaderNotText(String),
     HeaderNotTable,
-}
-
-/// What is wrong with a recipe as the list defines it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RecipeProblem {
-    NotTable,
-    StepsNotList,
-    NoSteps,
-    StepNotText,
 }
 
 impl Localized for ChannelError {
@@ -101,29 +93,18 @@ impl Localized for ChannelError {
             Self::NoName => text!(language, "channel-no-name", key = key::NAME),
             Self::NotText(key) => text!(language, "channel-not-text", key = key),
             Self::BadUrl(detail) => text!(language, "channel-bad-url", key = key::URL, detail = detail),
-            Self::BothUrlAndRecipe => text!(language, "channel-url-and-recipe", url = key::URL, recipe = key::RECIPE),
-            Self::NeitherUrlNorRecipe => text!(language, "channel-no-url-or-recipe", url = key::URL, recipe = key::RECIPE),
-            Self::UnknownRecipe(name) => text!(language, "channel-unknown-recipe", name = name),
-            Self::BrokenRecipe { name, problem } => text!(language, "channel-recipe", name = name, problem = problem.text(language)),
-            Self::Recipe { name, error } => text!(language, "channel-recipe", name = name, problem = error.text(language)),
+            Self::BothUrlAndSource => text!(language, "channel-url-and-source", url = key::URL, source = key::SOURCE),
+            Self::NeitherUrlNorSource => text!(language, "channel-no-url-or-source", url = key::URL, source = key::SOURCE),
+            Self::UnknownSource(name) => text!(language, "channel-unknown-source", name = name),
+            Self::BrokenSource { name, error } => text!(language, "channel-source", name = name, problem = error.text(language)),
+            Self::HeaderWithSource => text!(language, "channel-header-with-source", key = key::HEADER),
             Self::HeaderNotText(name) => text!(language, "channel-header-not-text", name = name),
             Self::HeaderNotTable => text!(language, "channel-header-not-table", key = key::HEADER),
         }
     }
 }
 
-impl Localized for RecipeProblem {
-    fn text(&self, language: Language) -> String {
-        match self {
-            Self::NotTable => text!(language, "channel-recipe-not-table"),
-            Self::StepsNotList => text!(language, "channel-recipe-steps-not-list", key = key::STEPS),
-            Self::NoSteps => text!(language, "channel-recipe-no-steps", key = key::STEPS),
-            Self::StepNotText => text!(language, "channel-recipe-step-not-text"),
-        }
-    }
-}
-
-display_in_english!(Error, ChannelError, RecipeProblem);
+display_in_english!(Error, ChannelError);
 
 /// The list as written, in the file's order.
 #[derive(Debug, PartialEq)]
@@ -140,26 +121,22 @@ pub enum Entry {
     Include(Url),
 }
 
-/// The recipes of the list by name: their steps as written, or why they
-/// cannot be used.
-type Recipes = BTreeMap<String, Result<Vec<String>, RecipeProblem>>;
+/// The sources of the list by name, checked, or why they cannot be used.
+type Sources = BTreeMap<String, Result<Arc<Source>, source::Error>>;
 
 /// The list in `text`; `device` gives the device identifier, asked for
-/// only when a recipe uses it. An error when `text` is not TOML, or has
-/// the Italian keys.
+/// only when a channel has a source. An error when `text` is not TOML, or
+/// has the Italian keys.
 pub fn parse(text: &str, device: impl Fn() -> Option<String>) -> Result<List, Error> {
     let root = DeTable::parse(text).map_err(|e| not_toml(text, &e))?.into_inner();
     if root.contains_key(key::ITALIAN_CHANNELS) {
         return Err(Error::ItalianKeys);
     }
-    let recipes = match root.get(key::RECIPES).map(Spanned::get_ref) {
-        Some(DeValue::Table(table)) => table.iter().map(|(name, value)| (name.get_ref().to_string(), steps(value))).collect(),
-        _ => Recipes::new(),
-    };
     let mut skipped = Vec::new();
+    let sources = sources(text, &mut skipped);
     let mut placed = Vec::new();
     for (section, value) in tables(&root, key::CHANNELS, &mut skipped) {
-        placed.push((section, Entry::Channel(channel(value, &recipes, &device))));
+        placed.push((section, Entry::Channel(channel(value, &sources, &device))));
     }
     for (section, table) in tables(&root, key::INCLUDE, &mut skipped) {
         match string(table, key::M3U).map(|m3u| m3u.map(|m3u| Url::parse(&m3u).map_err(|e| format!("{m3u}: {e}")))) {
@@ -202,22 +179,24 @@ fn tables<'a, 'i>(root: &'a DeTable<'i>, key: &str, skipped: &mut Vec<String>) -
         .collect()
 }
 
-/// The steps of a recipe as written, from its `steps`.
-fn steps(value: &Spanned<DeValue>) -> Result<Vec<String>, RecipeProblem> {
-    let DeValue::Table(table) = value.get_ref() else { return Err(RecipeProblem::NotTable) };
-    let steps = match table.get(key::STEPS).map(Spanned::get_ref) {
-        Some(DeValue::Array(steps)) => steps,
-        Some(_) => return Err(RecipeProblem::StepsNotList),
-        None => return Err(RecipeProblem::NoSteps),
+/// The list's `[sources.NAME]`, each read in the data model a source file
+/// has and checked. A broken source makes its channels unavailable, with
+/// the reason; `sources` that is not a table of tables is skipped.
+fn sources(text: &str, skipped: &mut Vec<String>) -> Sources {
+    let Ok(root) = toml::from_str::<serde_json::Value>(text) else { return Sources::new() };
+    let Some(sources) = root.get(key::SOURCES) else { return Sources::new() };
+    let Some(sources) = sources.as_object() else {
+        skipped.push(format!("`{}` is not a table", key::SOURCES));
+        return Sources::new();
     };
-    steps.iter().map(|step| step.get_ref().as_str().map(str::to_string).ok_or(RecipeProblem::StepNotText)).collect()
+    sources.iter().map(|(name, value)| (name.clone(), Source::from_list(name, value).map(Arc::new))).collect()
 }
 
 /// The channel of `table`, unavailable with the reason when it is broken.
-fn channel(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<String>) -> Channel {
+fn channel(table: &DeTable, sources: &Sources, device: &impl Fn() -> Option<String>) -> Channel {
     let name = string(table, key::NAME);
     let play = match &name {
-        Ok(Some(_)) => playable(table, recipes, device),
+        Ok(Some(name)) => play(table, name, sources, device),
         Ok(None) => Err(ChannelError::NoName),
         Err(error) => Err(error.clone()),
     };
@@ -229,25 +208,30 @@ fn channel(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<Stri
     }
 }
 
-/// What the channel of `table` plays: its URL, or its recipe with its
-/// parameters, with its headers.
-fn playable(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<String>) -> Result<Playable, ChannelError> {
-    let headers = headers(table)?;
-    match (string(table, key::URL)?, string(table, key::RECIPE)?) {
+/// What the channel of `table`, named `name`, plays: its URL with its
+/// headers, or the item of its source, made of its name as `title` and its
+/// other fields.
+fn play(table: &DeTable, name: &str, sources: &Sources, device: &impl Fn() -> Option<String>) -> Result<Play, ChannelError> {
+    match (string(table, key::URL)?, string(table, key::SOURCE)?) {
         (Some(url), None) => {
+            let headers = headers(table)?;
             let url = Url::parse(&url).map_err(|e| ChannelError::BadUrl(e.to_string()))?;
-            Ok(Playable::direct(url, headers))
+            Ok(Play::Stream(Playable::direct(url, headers)))
         }
-        (None, Some(name)) => {
-            let lines = recipes.get(&name).ok_or_else(|| ChannelError::UnknownRecipe(name.clone()))?;
-            let lines = lines.as_ref().map_err(|problem| ChannelError::BrokenRecipe { name: name.clone(), problem: problem.clone() })?;
-            let parameter =
-                |key: &str| parameter(table, key).or_else(|| if key == DEVICE_PARAMETER { device() } else { None });
-            let steps = recipe::instantiate(lines, parameter).map_err(|error| ChannelError::Recipe { name, error })?;
-            Ok(Playable::recipe(steps, headers))
+        (None, Some(source)) => {
+            if table.contains_key(key::HEADER) {
+                return Err(ChannelError::HeaderWithSource);
+            }
+            let found = sources.get(&source).ok_or_else(|| ChannelError::UnknownSource(source.clone()))?;
+            let found = found.as_ref().map_err(|error| ChannelError::BrokenSource { name: source, error: error.clone() })?;
+            let mut fields: BTreeMap<String, String> =
+                table.keys().filter_map(|key| Some((key.get_ref().to_string(), field(table, key.get_ref())?))).collect();
+            fields.insert(TITLE.into(), name.into());
+            let item = Item { fields };
+            Ok(Play::Source(Selection { source: found.clone(), item, device: device().unwrap_or_default() }))
         }
-        (Some(_), Some(_)) => Err(ChannelError::BothUrlAndRecipe),
-        (None, None) => Err(ChannelError::NeitherUrlNorRecipe),
+        (Some(_), Some(_)) => Err(ChannelError::BothUrlAndSource),
+        (None, None) => Err(ChannelError::NeitherUrlNorSource),
     }
 }
 
@@ -276,9 +260,9 @@ fn headers(table: &DeTable) -> Result<Vec<(String, String)>, ChannelError> {
     }
 }
 
-/// The recipe parameter `key` of the channel: a field of its own that is
-/// a text, a number or a boolean, as written.
-fn parameter(table: &DeTable, key: &str) -> Option<String> {
+/// The item field `key` of the channel: a field of its own that is a
+/// text, a number or a boolean, as written.
+fn field(table: &DeTable, key: &str) -> Option<String> {
     if CHANNEL_FIELDS.contains(&key) {
         return None;
     }

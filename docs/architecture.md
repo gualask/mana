@@ -7,9 +7,9 @@ inputs, resolvers and protocols must have distinct extension points.
 
 This document defines the structure, the contracts and the responsibilities.
 The workspace contains the shared library `mana-core` and the [TV
-app](tv-app.md). **Source files are read, checked and run by the core, but
-the apps do not use them yet**: live streams use the provisional recipe of
-the `.stream` files and of the channel list. The source file is defined in [Configuration and
+app](tv-app.md). Channels of the channel list name sources, which the
+session resolves when they open; `.stream` files and channel URLs are
+played as they are. The source file is defined in [Configuration and
 extensions](configuration.md), with what is still to be built.
 
 ## Requirements and evidence
@@ -103,8 +103,8 @@ The split of the recipes and a synthetic example are described in the
 
 | Module | Owns | Change it isolates |
 |---|---|---|
-| `session` | The current viewing, one at a time; reopening and new resolution with their limit; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
-| `live` | The stream to play (`Playable`: a `.stream` file or a channel's URL), provisional recipe, HLS client; reports interruptions without deciding | Stream protocols and formats |
+| `session` | The current viewing, one at a time; the candidates of a source's item, resolved and tried in order; reopening and new resolution with their limit; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
+| `live` | The stream to play at a known URL (`Playable`: a `.stream` file, a channel's URL, a source's resolution), HLS client; reports interruptions without deciding | Stream protocols and formats |
 | `source` | Source files: their contract, the vocabulary of their steps and the checks before use; the engine that runs them, with its limits and outcomes, the network given by the caller | Providers, written as data |
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |
 | `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; device identifier | List formats and their lifecycle |
@@ -136,7 +136,8 @@ stores.
 apps → session → live → playback (Input port only)
              → playback
 apps → playback (Backend port), catalog, net
-catalog → live (source, recipe), net
+catalog → live (playable), source, net
+session → source
 apps, catalog, live, net, playback, session, source → language
 apps, catalog, language, live, playback, session → log
 live, source → net
@@ -170,7 +171,7 @@ crates/core/                # mana-core: no UI and no platform dependency
   build.rs                  # shim and FFmpeg: bundled for the TV, MANA_FFMPEG or Homebrew on the desktop
   src/
     session/                # viewing, reopening (reopen.rs), viewing state and merged statistics (stats.rs)
-    live/                   # playable.rs (a stream to play), recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
+    live/                   # playable.rs (a stream to play), hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
     source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs), checks (validate.rs), engine (run/: flows and limits, values and templates, operations)
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
@@ -255,9 +256,9 @@ or breaks a rule of the contract, before it is used. An update will replace
 a source only after full validation; a wrong source will not delete the last
 valid one. The current session keeps the source it started with; a new
 session uses the new one. Binary plugins stay out: a capability missing from
-the vocabulary is a new operation in a new version of the app. The provisional
-recipes arrive with the channel list, from the URL the user chooses on the
-phone ([Channel list](channel-list.md)).
+the vocabulary is a new operation in a new version of the app. Sources
+arrive with the channel list, from the URL the user chooses on the phone
+([Channel list](channel-list.md)).
 
 Outcomes include `upcoming`, `ended`, `no_sources`, `unsupported_host`,
 `auth_required`, `challenge_required`, `source_changed`, `network_error`,

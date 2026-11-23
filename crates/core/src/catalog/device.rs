@@ -1,7 +1,7 @@
 //! The installation's device identifier: a UUID v4 that some providers ask
 //! for (Pluto's `clientID`), the same for every channel and across starts.
-//! Created the first time a recipe needs it, kept in the data directory the
-//! app gives.
+//! Created the first time a channel with a source is read, kept in the
+//! data directory the app gives.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

@@ -17,7 +17,10 @@ use crate::playback::demux::Demux;
 use crate::playback::feeder::{self, Ended};
 use crate::playback::ffmpeg::Media;
 use crate::playback::reader::Reader;
+use crate::net::{self, Client};
 use crate::playback::{self, OpenBackend, Settings};
+use crate::source::Selection;
+use crate::source::run::{Candidate, Engine, MAX_ANSWER_BYTES, Outcome, Request, Resolved};
 
 /// A live stream is opened again after a failure, or resolved again after
 /// a refused token, at most this many times within REOPEN_WINDOW; then
@@ -26,6 +29,13 @@ use crate::playback::{self, OpenBackend, Settings};
 /// about two minutes, an occasional one is always recovered.
 pub const MAX_REOPENINGS: usize = 6;
 const REOPEN_WINDOW: Duration = Duration::from_secs(300);
+/// Network failures, one second apart, that open a candidate of a source
+/// before the next one is tried, when there is one: an unreachable host
+/// must give way. As Media3's playlists (3 retries); hls.js gives up a
+/// manifest after 1 retry, FFmpeg's hls.c does not retry it. Without a
+/// next candidate, and for a stream the list gives, opening goes on until
+/// the network is back, as a TV tunes in again.
+const CANDIDATE_ATTEMPTS: u32 = 3;
 
 /// What to do once an opening of a live stream ended.
 #[derive(Debug, PartialEq)]
@@ -104,6 +114,7 @@ pub(super) fn run(
     let loaded;
     let playable = match program {
         Program::Live(playable) => playable,
+        Program::Source(selection) => return play_source(selection, settings, open, stop, shared, quality),
         // A `.stream` file describes a live HLS stream.
         Program::Path(path) if path.extension().is_some_and(|e| e == playable::EXTENSION) => {
             loaded = Playable::load(path).map_err(Failure::Playable)?;
@@ -113,13 +124,72 @@ pub(super) fn run(
         Program::Path(path) => return Ok(play_file(path, settings, open, stop, &shared.playback)?),
     };
     log!("live {}", playable.describe());
-    play_stream(playable, settings, open, stop, shared, quality)
+    play_stream(playable.clone(), &mut || Ok(playable.clone()), None, settings, open, stop, shared, quality)
+}
+
+/// Plays an item of a source: its candidates in order, each resolved and
+/// played as long as it can be, the next one when it gives nothing or
+/// fails; the last failure when none plays.
+fn play_source(
+    selection: &Selection,
+    settings: &Settings,
+    open: &OpenBackend,
+    stop: &Arc<AtomicBool>,
+    shared: &Shared,
+    quality: &QualityChoice,
+) -> Result<(), Failure> {
+    let (source, item) = (&selection.source, &selection.item);
+    log!("source {}: {}", source.id, item.fields.get("title").map_or("", String::as_str));
+    let client = Client::new().map_err(|e| Failure::Live(Interruption::Failed(Cause::Client(e))))?;
+    let fetch = |request: &Request| client.send(request.method, &request.url, &request.headers, request.body.as_deref(), MAX_ANSWER_BYTES);
+    let mut engine = Engine::new(source, &selection.device, fetch, || stop.load(Ordering::Relaxed));
+    let candidates = match engine.sources(item) {
+        Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
+        other => other.map_err(Failure::Source)?,
+    };
+    let mut last = None;
+    for (n, candidate) in candidates.iter().enumerate() {
+        let id = candidate.fields.get("id").map_or("", String::as_str);
+        let attempts = (n + 1 < candidates.len()).then_some(CANDIDATE_ATTEMPTS);
+        let failure = match engine.resolve(candidate, item) {
+            Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
+            Err(failure) => Failure::Source(failure),
+            Ok(resolved) => {
+                log!("candidate {id} resolved: {}", net::loggable(&resolved.url));
+                let mut renew = || renewed(&mut engine, candidate, item);
+                match play_stream(playable(resolved), &mut renew, attempts, settings, open, stop, shared, quality) {
+                    Ok(()) => return Ok(()),
+                    Err(failure) => failure,
+                }
+            }
+        };
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        log!("candidate {id} gave nothing to play: {failure}");
+        last = Some(failure);
+    }
+    Err(last.expect("sources gives at least one candidate"))
+}
+
+/// `candidate` resolved again, its token having been refused.
+fn renewed(engine: &mut Engine, candidate: &Candidate, item: &crate::source::Item) -> Result<Playable, Failure> {
+    let resolved = engine.resolve(candidate, item).map_err(Failure::Source)?;
+    log!("stream resolved again: {}", net::loggable(&resolved.url));
+    Ok(playable(resolved))
+}
+
+fn playable(resolved: Resolved) -> Playable {
+    Playable::direct(resolved.url, resolved.headers)
 }
 
 /// Opens the live `playable` again and again, as `charge` allows, until it
-/// ends or the viewing stops.
+/// ends or the viewing stops; `renew` gives it anew when its token is
+/// refused; each opening fails after `attempts` network failures, if given.
 fn play_stream(
-    playable: &Playable,
+    playable: Playable,
+    renew: &mut dyn FnMut() -> Result<Playable, Failure>,
+    attempts: Option<u32>,
     settings: &Settings,
     open: &OpenBackend,
     stop: &Arc<AtomicBool>,
@@ -127,7 +197,8 @@ fn play_stream(
     quality: &QualityChoice,
 ) -> Result<(), Failure> {
     let mut budget = Budget::default();
-    let mut live = resolve(playable, stop, shared, quality, &mut budget)?;
+    let mut playable = playable;
+    let mut live = resolve(&mut playable, renew, attempts, stop, shared, quality, &mut budget)?;
     while let Some(opened) = &live {
         let stream_stop = hls::Stop::new(stop);
         let ended = play_live(opened, &stream_stop, open, settings, stop, &shared.playback);
@@ -140,24 +211,29 @@ fn play_stream(
         match charge(next(stream_stop.interruption(), ended), &mut budget) {
             Next::End(result) => return result,
             Next::Reopen(_) => {}
-            Next::Resolve(_) => live = resolve(playable, stop, shared, quality, &mut budget)?,
+            Next::Resolve(_) => {
+                playable = renew()?;
+                live = resolve(&mut playable, renew, attempts, stop, shared, quality, &mut budget)?;
+            }
         }
     }
     Ok(())
 }
 
-/// Resolves `playable`: None once stopped meanwhile. A refused token, as when
-/// the recipe's URL expired already, has it resolved again, within the
-/// budget.
+/// Tells what `playable` serves: None once stopped meanwhile. A refused
+/// token, as when the URL expired already, has it given anew by `renew`,
+/// within the budget.
 fn resolve(
-    playable: &Playable,
+    playable: &mut Playable,
+    renew: &mut dyn FnMut() -> Result<Playable, Failure>,
+    attempts: Option<u32>,
     stop: &Arc<AtomicBool>,
     shared: &Shared,
     quality: &QualityChoice,
     budget: &mut Budget,
 ) -> Result<Option<Live>, Failure> {
     loop {
-        let cause = match Live::resolve(playable, &hls::Stop::resolving(stop), shared.live.clone(), quality) {
+        let cause = match Live::resolve(playable, &hls::Stop::resolving(stop), shared.live.clone(), quality, attempts) {
             Ok(live) => return Ok(live),
             Err(Interruption::Refused(cause)) => cause,
             Err(other) => return Err(Failure::Live(other)),
@@ -165,6 +241,7 @@ fn resolve(
         if let Next::End(result) = charge(Next::Resolve(cause), budget) {
             return result.map(|()| None);
         }
+        *playable = renew()?;
     }
 }
 

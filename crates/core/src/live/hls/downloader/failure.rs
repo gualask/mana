@@ -25,7 +25,13 @@ pub(in crate::live::hls) enum Failure {
 
 impl From<net::Error> for Failure {
     fn from(error: net::Error) -> Self {
-        Self::of_network(&error)(error.into())
+        if error.is_refused() {
+            Self::Refused(error.into())
+        } else if error.is_oversized() {
+            Self::Unsupported(error.into())
+        } else {
+            Self::Transient(error.into())
+        }
     }
 }
 
@@ -39,18 +45,6 @@ impl From<playlist::Error> for Failure {
 }
 
 impl Failure {
-    /// The kind of failure a network error makes, for the cause it stopped:
-    /// the error itself, or a recipe that downloads.
-    pub(in crate::live::hls) fn of_network(error: &net::Error) -> fn(Cause) -> Self {
-        if error.is_refused() {
-            Self::Refused
-        } else if error.is_oversized() {
-            Self::Unsupported
-        } else {
-            Self::Transient
-        }
-    }
-
     pub(in crate::live::hls) fn cause(self) -> Cause {
         match self {
             Self::Transient(cause) | Self::Refused(cause) | Self::Unsupported(cause) => cause,
