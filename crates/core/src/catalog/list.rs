@@ -15,7 +15,7 @@ use url::Url;
 use super::Channel;
 use crate::language::{Language, Localized, display_in_english};
 use crate::live::recipe;
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 use crate::text;
 
 /// The parameter that gives the installation's device identifier.
@@ -217,7 +217,7 @@ fn steps(value: &Spanned<DeValue>) -> Result<Vec<String>, RecipeProblem> {
 fn channel(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<String>) -> Channel {
     let name = string(table, key::NAME);
     let play = match &name {
-        Ok(Some(_)) => source(table, recipes, device),
+        Ok(Some(_)) => playable(table, recipes, device),
         Ok(None) => Err(ChannelError::NoName),
         Err(error) => Err(error.clone()),
     };
@@ -231,12 +231,12 @@ fn channel(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<Stri
 
 /// What the channel of `table` plays: its URL, or its recipe with its
 /// parameters, with its headers.
-fn source(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<String>) -> Result<Source, ChannelError> {
+fn playable(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<String>) -> Result<Playable, ChannelError> {
     let headers = headers(table)?;
     match (string(table, key::URL)?, string(table, key::RECIPE)?) {
         (Some(url), None) => {
             let url = Url::parse(&url).map_err(|e| ChannelError::BadUrl(e.to_string()))?;
-            Ok(Source::direct(url, headers))
+            Ok(Playable::direct(url, headers))
         }
         (None, Some(name)) => {
             let lines = recipes.get(&name).ok_or_else(|| ChannelError::UnknownRecipe(name.clone()))?;
@@ -244,7 +244,7 @@ fn source(table: &DeTable, recipes: &Recipes, device: &impl Fn() -> Option<Strin
             let parameter =
                 |key: &str| parameter(table, key).or_else(|| if key == DEVICE_PARAMETER { device() } else { None });
             let steps = recipe::instantiate(lines, parameter).map_err(|error| ChannelError::Recipe { name, error })?;
-            Ok(Source::recipe(steps, headers))
+            Ok(Playable::recipe(steps, headers))
         }
         (Some(_), Some(_)) => Err(ChannelError::BothUrlAndRecipe),
         (None, None) => Err(ChannelError::NeitherUrlNorRecipe),

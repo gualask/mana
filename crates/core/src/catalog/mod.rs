@@ -1,5 +1,5 @@
 //! The channels to choose from, as models the interface shows, each with
-//! the source it plays.
+//! the stream it plays.
 
 pub mod device;
 pub mod list;
@@ -9,7 +9,7 @@ pub mod update;
 use std::borrow::Cow;
 
 use crate::language::Language;
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 use crate::text;
 pub use list::ChannelError;
 
@@ -23,7 +23,7 @@ pub struct Channel {
     pub group: Option<String>,
     /// What it plays, or why it cannot be played: the list gives no stream,
     /// or a broken one.
-    pub play: Result<Source, ChannelError>,
+    pub play: Result<Playable, ChannelError>,
 }
 
 impl Channel {

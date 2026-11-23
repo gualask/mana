@@ -7,7 +7,7 @@ use super::*;
 use crate::live::Stats;
 use crate::live::hls::Live;
 use crate::live::hls::ts::{PACKET, SYNC};
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 use crate::playback::Input;
 
 /// `count` packets filled with `fill`, the first a program association
@@ -78,8 +78,8 @@ fn each_answer_is_a_section_and_the_first_is_not_asked_twice() {
     });
     let viewing = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(Mutex::new(Stats::default()));
-    let source = Source::direct(url.parse().unwrap(), Vec::new());
-    let live = Live::resolve(&source, &Stop::new(&viewing), stats, &Default::default()).unwrap().unwrap();
+    let playable = Playable::direct(url.parse().unwrap(), Vec::new());
+    let live = Live::resolve(&playable, &Stop::new(&viewing), stats, &Default::default()).unwrap().unwrap();
     let stop = Stop::new(&viewing);
     let mut stream = live.open(&stop).unwrap().main;
     for (section, answer) in answers[..2].iter().enumerate() {

@@ -77,7 +77,7 @@ the TV at every opening, one line `header = Name: value` for each header
 and, optionally, `ca = file.pem`. A header that a request cannot carry, here
 or in an M3U list (invalid name, control or non-ASCII characters, value over
 4096 bytes), is dropped with a log warning that gives its name
-([source.rs](../crates/core/src/live/source.rs)). For example, a channel
+([playable.rs](../crates/core/src/live/playable.rs)). For example, a channel
 whose website describes the live stream in a JSON opens like this:
 
 ```text

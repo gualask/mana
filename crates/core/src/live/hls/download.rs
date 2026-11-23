@@ -22,7 +22,7 @@ use super::playlist::{self, parse_master, text};
 use super::ts;
 use super::stream::{Chunk, HlsStream, Stop};
 use crate::live::recipe;
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 use crate::live::{Cause, Interruption, QualityChoice, Stats};
 use crate::log::log;
 use crate::net::{self, Client, loggable};
@@ -31,14 +31,14 @@ use crate::net::{self, Client, loggable};
 /// segment::MAX_BYTES.
 const QUEUED_SEGMENTS: usize = 3;
 
-/// The byte streams of a source: video (with muxed audio, if any) and an
+/// The byte streams of a stream to play: video (with muxed audio, if any) and an
 /// audio rendition of its own, when the variant has one.
 pub struct Streams {
     pub main: HlsStream,
     pub audio: Option<HlsStream>,
 }
 
-/// A live source with its variants: their media playlists can be opened
+/// A live stream with its variants: their media playlists can be opened
 /// again, from the live edge, without the master playlist, whose token may
 /// have expired meanwhile (RaiPlay's lasts 150 s, its media playlists' 24 h);
 /// a new opening starts on the variant followed last. Or a continuous
@@ -50,33 +50,33 @@ pub struct Live {
 
 enum Media {
     /// The video variants, and their audio rendition when it has its own
-    /// playlist. When the source's URL served a media playlist, the first
+    /// playlist. When the stream's URL served a media playlist, the first
     /// opening starts from that answer, which needs no request of its own.
     Playlists { ladder: Arc<Mutex<Ladder>>, audio: Option<Url>, first: Mutex<Option<Fetched>> },
-    /// The stream's URL, as the source gives it: a redirect may lead to an
+    /// The stream's URL, as the stream to play gives it: a redirect may lead to an
     /// address whose token expires. The answer that told it apart goes to
     /// the first opening, which needs no request of its own.
     Continuous { url: Url, first: Mutex<Option<Body>> },
 }
 
 impl Live {
-    /// Resolves the source's recipe, if any, and tells what its URL serves:
+    /// Resolves the stream's recipe, if any, and tells what its URL serves:
     /// a master playlist, whose variants and audio rendition it chooses,
     /// following the viewer's `choice` of quality, or a continuous stream.
     /// Blocks until then, retrying network errors; returns None when
     /// stopped meanwhile. A refused token is an interruption of its own:
-    /// the session may resolve the source again.
+    /// the session may resolve the stream again.
     pub fn resolve(
-        source: &Source,
+        playable: &Playable,
         stop: &Stop,
         stats: Arc<Mutex<Stats>>,
         choice: &QualityChoice,
     ) -> Result<Option<Self>, Interruption> {
-        let named = source.named_urls().map_err(|e| Interruption::Failed(Cause::Source(e)))?;
-        let client = Client::for_source(source.headers.clone(), &named, source.root_certificate.as_deref())
+        let named = playable.named_urls().map_err(|e| Interruption::Failed(Cause::Playable(e)))?;
+        let client = Client::for_source(playable.headers.clone(), &named, playable.root_certificate.as_deref())
             .map_err(|e| Interruption::Failed(Cause::Client(e)))?;
-        let mut reader = Downloader::new(client.clone(), "source");
-        let Some(master) = master_url(source, &mut reader, stop)? else { return Ok(None) };
+        let mut reader = Downloader::new(client.clone(), "stream");
+        let Some(master) = master_url(playable, &mut reader, stop)? else { return Ok(None) };
         let served = |d: &mut Downloader| served(d.client(), &master, choice, &stats);
         let Some(media) = reader.retry(stop, None, served).map_err(interruption)? else {
             return Ok(None);
@@ -105,19 +105,19 @@ impl Live {
     }
 }
 
-/// The URL `source` gives, or its recipe ends on; None when stopped.
-fn master_url(source: &Source, reader: &mut Downloader, stop: &Stop) -> Result<Option<Url>, Interruption> {
-    if let Some(url) = &source.url {
+/// The URL `playable` gives, or its recipe ends on; None when stopped.
+fn master_url(playable: &Playable, reader: &mut Downloader, stop: &Stop) -> Result<Option<Url>, Interruption> {
+    if let Some(url) = &playable.url {
         return Ok(Some(url.clone()));
     }
-    let master = run_recipe(reader, &source.resolve, stop).map_err(interruption)?;
+    let master = run_recipe(reader, &playable.resolve, stop).map_err(interruption)?;
     if let Some(master) = &master {
-        log!("source resolved: {}", loggable(master));
+        log!("stream resolved: {}", loggable(master));
     }
     Ok(master)
 }
 
-/// Why resolving a source failed, as the session tells the failures apart.
+/// Why resolving a stream failed, as the session tells the failures apart.
 fn interruption(failure: Failure) -> Interruption {
     match failure {
         Failure::Refused(error) => Interruption::Refused(error),

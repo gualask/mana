@@ -1,5 +1,5 @@
 //! What the TV and desktop apps share, with no interface and no platform:
-//! the catalog, live sources down to a byte stream, playback from a byte
+//! the catalog, live streams down to a byte stream, playback from a byte
 //! stream to the decoder each app provides, and the viewing session that
 //! ties them together.
 

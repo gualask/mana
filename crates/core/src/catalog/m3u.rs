@@ -5,7 +5,7 @@ use std::path::Path;
 use url::Url;
 
 use super::{Channel, ChannelError};
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 
 /// The channels of the M3U list at `path`; None when it cannot be read or
 /// lists none.
@@ -63,7 +63,7 @@ impl Entry {
             Some(line) => {
                 let (url, headers) = line.split_once('|').unwrap_or((line, ""));
                 self.headers.extend(kodi_headers(headers));
-                Url::parse(url).map(|url| Source::direct(url, self.headers)).map_err(|e| ChannelError::BadUrl(e.to_string()))
+                Url::parse(url).map(|url| Playable::direct(url, self.headers)).map_err(|e| ChannelError::BadUrl(e.to_string()))
             }
             None => Err(ChannelError::NoStream),
         };
@@ -111,7 +111,7 @@ mod tests {
 
     fn channel(name: &str, logo: Option<&str>, url: Option<&str>, headers: &[(&str, &str)]) -> Channel {
         let headers = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
-        let play = url.map(|url| Source::direct(url.parse().unwrap(), headers)).ok_or(ChannelError::NoStream);
+        let play = url.map(|url| Playable::direct(url.parse().unwrap(), headers)).ok_or(ChannelError::NoStream);
         Channel { name: Some(name.into()), logo: logo.map(Into::into), group: None, play }
     }
 

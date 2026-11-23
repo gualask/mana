@@ -172,7 +172,7 @@ crates/core/                # mana-core: no UI and no platform dependency
   build.rs                  # shim and FFmpeg: bundled for the TV, MANA_FFMPEG or Homebrew on the desktop
   src/
     session/                # viewing, reopening (reopen.rs), viewing state and merged statistics (stats.rs)
-    live/                   # source.rs, recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
+    live/                   # playable.rs (a stream to play), recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace

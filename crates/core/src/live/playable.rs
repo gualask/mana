@@ -20,14 +20,14 @@ const MAX_HEADER_VALUE: usize = net::MAX_LINE_VALUE;
 /// number of `header = Name: value`, optional `ca = file.pem` (relative to
 /// the file) trusted in addition to the public roots.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Source {
+pub struct Playable {
     pub url: Option<Url>,
     pub resolve: Vec<Step>,
     pub headers: Vec<(String, String)>,
     pub root_certificate: Option<PathBuf>,
 }
 
-impl Source {
+impl Playable {
     /// The stream at `url`, requested with `headers`, as a channel list
     /// gives them.
     pub fn direct(url: Url, headers: Vec<(String, String)>) -> Self {
@@ -65,7 +65,7 @@ impl Source {
         Ok(Self { url, resolve, headers: checked(headers), root_certificate })
     }
 
-    /// The URLs the source gives itself, to which its credentials go: its
+    /// The URLs the stream gives itself, to which its credentials go: its
     /// `url`, or those its recipe downloads as written.
     pub fn named_urls(&self) -> Result<Vec<Url>, Error> {
         let written = self.resolve.iter().filter_map(|step| match step {
@@ -85,7 +85,7 @@ impl Source {
     }
 }
 
-/// Why a `.stream` file, or a source's URL, cannot be used; `file` is the
+/// Why a `.stream` file, or a stream's URL, cannot be used; `file` is the
 /// file's path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -171,18 +171,18 @@ mod tests {
     #[test]
     fn a_channel_list_s_bad_headers_are_left_out() {
         let headers = vec![header("User-Agent", "VLC/3.0"), header("Referer", "a\u{7}b"), header("Origin", "https://b.invalid")];
-        let source = Source::direct("https://a.invalid/live.m3u8".parse().unwrap(), headers);
-        assert_eq!(source.headers, [header("User-Agent", "VLC/3.0"), header("Origin", "https://b.invalid")]);
+        let playable = Playable::direct("https://a.invalid/live.m3u8".parse().unwrap(), headers);
+        assert_eq!(playable.headers, [header("User-Agent", "VLC/3.0"), header("Origin", "https://b.invalid")]);
     }
 
     #[test]
     fn a_stream_file_s_bad_headers_are_left_out() {
-        let dir = std::env::temp_dir().join(format!("mana-source-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mana-playable-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("headers.stream");
         let long = "a".repeat(MAX_HEADER_VALUE + 1);
         let text = format!("url = https://a.invalid/live.m3u8\nheader = User-Agent: VLC/3.0\nheader = Cookie: {long}\nheader = X\u{1}Y: z\n");
         std::fs::write(&path, text).unwrap();
-        assert_eq!(Source::load(&path).unwrap().headers, [header("User-Agent", "VLC/3.0")]);
+        assert_eq!(Playable::load(&path).unwrap().headers, [header("User-Agent", "VLC/3.0")]);
     }
 }

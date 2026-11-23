@@ -233,7 +233,7 @@ fn a_direct_url_refused_at_the_opening_ends_with_its_status() {
 }
 
 #[test]
-fn a_media_playlist_given_as_the_source_is_asked_for_once() {
+fn a_media_playlist_given_as_the_stream_is_asked_for_once() {
     let (address, asked) = serve(|path| match path {
         "/media.m3u8" => (200, b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\naudio.aac\n#EXT-X-ENDLIST\n".to_vec()),
         _ => (200, packed_audio_segment()),
@@ -272,7 +272,7 @@ fn a_channel_s_headers_go_with_every_request_of_its_stream() {
     let (open, _) = fake::open();
     let mut session = Session::new(open);
     let headers = vec![("User-Agent".into(), "HbbTV/1.6.1".into()), ("Referer".into(), "https://b.invalid/".into())];
-    let program = Program::Live(Source::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
+    let program = Program::Live(Playable::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
     session.play("Canale".into(), program, Settings::default()).unwrap();
     ended(&session);
     let asked = asked.lock().unwrap();
@@ -312,10 +312,10 @@ fn a_channel_s_recipe_runs_with_its_parameters_and_headers() {
         _ => None,
     };
     let steps = crate::live::recipe::instantiate(&lines, parameter).unwrap();
-    let source = Source::recipe(steps, vec![("User-Agent".into(), "Mana-test".into())]);
+    let playable = Playable::recipe(steps, vec![("User-Agent".into(), "Mana-test".into())]);
     let (open, _) = fake::open();
     let mut session = Session::new(open);
-    session.play("Pluto".into(), Program::Live(source), Settings::default()).unwrap();
+    session.play("Pluto".into(), Program::Live(playable), Settings::default()).unwrap();
     let state = ended(&session);
     assert_eq!(state, "Error: the stream has no video");
     let asked = asked.lock().unwrap();
@@ -331,7 +331,7 @@ fn a_recipe_answer_over_the_limit_ends_without_retrying() {
     let steps = vec![crate::live::recipe::Step::parse(&format!("get {address}/token")).unwrap()];
     let (open, _) = fake::open();
     let mut session = Session::new(open);
-    session.play("big".into(), Program::Live(Source::recipe(steps, Vec::new())), Settings::default()).unwrap();
+    session.play("big".into(), Program::Live(Playable::recipe(steps, Vec::new())), Settings::default()).unwrap();
     let state = ended(&session);
     assert!(state.contains("/token: answer over"), "{state}");
     assert_eq!(asked.lock().unwrap().len(), 1);
@@ -348,7 +348,7 @@ fn a_header_no_request_can_carry_is_left_out_and_the_stream_plays() {
     let mut session = Session::new(open);
     let headers =
         vec![("User-Agent".into(), "HbbTV/1.6.1".into()), ("Referer".into(), "https://b.invalid/\r\nX-Injected: 1".into())];
-    let program = Program::Live(Source::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
+    let program = Program::Live(Playable::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
     session.play("Canale".into(), program, Settings::default()).unwrap();
     // The segment arrives: the stream ends on its formats, not on requests
     // the transport refuses.

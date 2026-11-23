@@ -1,4 +1,4 @@
-//! Playing a source to its end: a local file once, a live source opened
+//! Playing a stream to its end: a local file once, a live stream opened
 //! again whenever an opening is interrupted, as a TV tunes in again.
 
 use std::collections::VecDeque;
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::Program;
 use super::stats::{Failure, Shared};
 use crate::live::hls::{self, Live};
-use crate::live::source::{self, Source};
+use crate::live::playable::{self, Playable};
 use crate::live::{Cause, Interruption, QualityChoice, Stall};
 use crate::log::log;
 use crate::playback::demux::Demux;
@@ -19,7 +19,7 @@ use crate::playback::ffmpeg::Media;
 use crate::playback::reader::Reader;
 use crate::playback::{self, OpenBackend, Settings};
 
-/// A live source is opened again after a failure, or resolved again after
+/// A live stream is opened again after a failure, or resolved again after
 /// a refused token, at most this many times within REOPEN_WINDOW; then
 /// playback ends. A frozen decoder takes 15 s to be noticed, so the window
 /// must hold more than that many of them: one stuck every 20 s ends after
@@ -27,10 +27,10 @@ use crate::playback::{self, OpenBackend, Settings};
 pub const MAX_REOPENINGS: usize = 6;
 const REOPEN_WINDOW: Duration = Duration::from_secs(300);
 
-/// What to do once an opening of a live source ended.
+/// What to do once an opening of a live stream ended.
 #[derive(Debug, PartialEq)]
 enum Next {
-    /// The source ended, or cannot be played.
+    /// The stream ended, or cannot be played.
     End(Result<(), Failure>),
     /// Open it again from the live edge.
     Reopen(Reopening),
@@ -38,7 +38,7 @@ enum Next {
     Resolve(Cause),
 }
 
-/// Why a live source is opened again.
+/// Why a live stream is opened again.
 #[derive(Debug, PartialEq)]
 enum Reopening {
     Stuck(Stall),
@@ -102,24 +102,24 @@ pub(super) fn run(
     quality: &QualityChoice,
 ) -> Result<(), Failure> {
     let loaded;
-    let source = match program {
-        Program::Live(source) => source,
+    let playable = match program {
+        Program::Live(playable) => playable,
         // A `.stream` file describes a live HLS stream.
-        Program::Path(path) if path.extension().is_some_and(|e| e == source::EXTENSION) => {
-            loaded = Source::load(path).map_err(Failure::Source)?;
+        Program::Path(path) if path.extension().is_some_and(|e| e == playable::EXTENSION) => {
+            loaded = Playable::load(path).map_err(Failure::Playable)?;
             &loaded
         }
         // Anything else is a local file, which can loop.
         Program::Path(path) => return Ok(play_file(path, settings, open, stop, &shared.playback)?),
     };
-    log!("live {}", source.describe());
-    play_source(source, settings, open, stop, shared, quality)
+    log!("live {}", playable.describe());
+    play_stream(playable, settings, open, stop, shared, quality)
 }
 
-/// Opens the live `source` again and again, as `charge` allows, until it
+/// Opens the live `playable` again and again, as `charge` allows, until it
 /// ends or the viewing stops.
-fn play_source(
-    source: &Source,
+fn play_stream(
+    playable: &Playable,
     settings: &Settings,
     open: &OpenBackend,
     stop: &Arc<AtomicBool>,
@@ -127,37 +127,37 @@ fn play_source(
     quality: &QualityChoice,
 ) -> Result<(), Failure> {
     let mut budget = Budget::default();
-    let mut live = resolve(source, stop, shared, quality, &mut budget)?;
+    let mut live = resolve(playable, stop, shared, quality, &mut budget)?;
     while let Some(opened) = &live {
-        let source_stop = hls::Stop::new(stop);
-        let ended = play_live(opened, &source_stop, open, settings, stop, &shared.playback);
+        let stream_stop = hls::Stop::new(stop);
+        let ended = play_live(opened, &stream_stop, open, settings, stop, &shared.playback);
         // The downloaders of this opening end with it, also when it failed
         // to open.
-        source_stop.set();
+        stream_stop.set();
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-        match charge(next(source_stop.interruption(), ended), &mut budget) {
+        match charge(next(stream_stop.interruption(), ended), &mut budget) {
             Next::End(result) => return result,
             Next::Reopen(_) => {}
-            Next::Resolve(_) => live = resolve(source, stop, shared, quality, &mut budget)?,
+            Next::Resolve(_) => live = resolve(playable, stop, shared, quality, &mut budget)?,
         }
     }
     Ok(())
 }
 
-/// Resolves `source`: None once stopped meanwhile. A refused token, as when
+/// Resolves `playable`: None once stopped meanwhile. A refused token, as when
 /// the recipe's URL expired already, has it resolved again, within the
 /// budget.
 fn resolve(
-    source: &Source,
+    playable: &Playable,
     stop: &Arc<AtomicBool>,
     shared: &Shared,
     quality: &QualityChoice,
     budget: &mut Budget,
 ) -> Result<Option<Live>, Failure> {
     loop {
-        let cause = match Live::resolve(source, &hls::Stop::resolving(stop), shared.live.clone(), quality) {
+        let cause = match Live::resolve(playable, &hls::Stop::resolving(stop), shared.live.clone(), quality) {
             Ok(live) => return Ok(live),
             Err(Interruption::Refused(cause)) => cause,
             Err(other) => return Err(Failure::Live(other)),
@@ -187,7 +187,7 @@ fn charge(outcome: Next, budget: &mut Budget) -> Next {
         }
         Next::Resolve(cause) => match budget.spend() {
             Some(spent) => {
-                log!("source to resolve again ({spent}/{MAX_REOPENINGS}): {cause}");
+                log!("stream to resolve again ({spent}/{MAX_REOPENINGS}): {cause}");
                 Next::Resolve(cause)
             }
             None => Next::End(Err(Failure::RefusedAgain(cause))),
@@ -213,19 +213,19 @@ fn play_file(
 
 fn play_live(
     live: &Live,
-    source_stop: &hls::Stop,
+    stream_stop: &hls::Stop,
     open: &OpenBackend,
     settings: &Settings,
     stop: &AtomicBool,
     stats: &Mutex<playback::Stats>,
 ) -> Result<Ended, playback::Error> {
-    let streams = live.open(source_stop).map_err(|e| playback::Error::Thread(e.to_string()))?;
+    let streams = live.open(stream_stop).map_err(|e| playback::Error::Thread(e.to_string()))?;
     let main = Media::open_stream(Box::new(streams.main)).map_err(playback::Error::Demuxer)?;
     let audio = streams.audio.map(|a| Media::open_stream(Box::new(a))).transpose().map_err(playback::Error::Demuxer)?;
     let reader = Reader::start(Demux::new(main, audio), false)?;
     let ended = feeder::play(&reader, true, open, settings, stop, stats);
     // The reader may be waiting on the downloads for data: they stop first.
-    source_stop.set();
+    stream_stop.set();
     reader.finish();
     ended
 }

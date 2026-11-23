@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use super::reopen::MAX_REOPENINGS;
 use crate::language::{Language, Localized, display_in_english};
-use crate::live::source;
+use crate::live::playable;
 use crate::live::{Cause, Interruption, Quality};
 use crate::playback::Phase;
 use crate::{live, playback};
@@ -48,11 +48,11 @@ impl Localized for State {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Failure {
     /// A `.stream` file that cannot be used.
-    Source(source::Error),
-    /// The live source stopped, and opening it again cannot help.
+    Playable(playable::Error),
+    /// The live stream stopped, and opening it again cannot help.
     Live(Interruption),
     Playback(playback::Error),
-    /// The source's token was refused after every new resolution allowed.
+    /// The stream's token was refused after every new resolution allowed.
     RefusedAgain(Cause),
     /// The viewing's thread could not start, as the system says.
     Thread(String),
@@ -67,7 +67,7 @@ impl From<playback::Error> for Failure {
 impl Localized for Failure {
     fn text(&self, language: Language) -> String {
         match self {
-            Self::Source(error) => error.text(language),
+            Self::Playable(error) => error.text(language),
             Self::Live(interruption) => interruption.text(language),
             Self::Playback(error) => error.text(language),
             Self::RefusedAgain(cause) => {

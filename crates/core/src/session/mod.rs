@@ -1,4 +1,4 @@
-//! The viewing session: one source plays at a time, on its own thread.
+//! The viewing session: one stream plays at a time, on its own thread.
 //! Stopping or changing a viewing returns at once: its threads end on their
 //! own, at their next check, and a new viewing opens its backend only once
 //! the one before has released its own (Turn), so the remote never waits
@@ -16,20 +16,20 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::live::QualityChoice;
-use crate::live::source::Source;
+use crate::live::playable::Playable;
 use crate::log::log;
 use crate::playback::{BackendError, OpenBackend, Settings};
 pub use crate::live::Quality;
-pub use crate::live::source::EXTENSION as STREAM_EXTENSION;
+pub use crate::live::playable::EXTENSION as STREAM_EXTENSION;
 pub use stats::{Failure, State, Stats};
 use stats::Shared;
 
 /// What a viewing plays.
 pub enum Program {
-    /// A local file, or a `.stream` file describing a live source.
+    /// A local file, or a `.stream` file describing a live stream.
     Path(PathBuf),
-    /// A live source, as a channel list gives it.
-    Live(Source),
+    /// A live stream, as a channel list gives it.
+    Live(Playable),
 }
 
 pub struct Session {

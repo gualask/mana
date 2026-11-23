@@ -1,4 +1,4 @@
-//! From a source to a byte stream: the `.stream` file, the recipe that
+//! From a stream to play to a byte stream: the `.stream` file, the recipe that
 //! resolves it, and the HLS client that downloads it.
 
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use crate::text;
 
 pub mod hls;
 pub mod recipe;
-pub mod source;
+pub mod playable;
 
 /// The quality the viewer asks for, among the variants of a master
 /// playlist.
@@ -72,8 +72,8 @@ impl QualityChoice {
     }
 }
 
-/// Why an opening of a live source stopped itself. Live only reports it:
-/// whether to open the source again is the session's to decide.
+/// Why an opening of a live stream stopped itself. Live only reports it:
+/// whether to open the stream again is the session's to decide.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Interruption {
     /// The server refused the URLs' token: only a new resolution gives new
@@ -97,13 +97,13 @@ impl Localized for Interruption {
     }
 }
 
-/// What made a download of a live source fail.
+/// What made a download of a live stream fail.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cause {
     Network(net::Error),
     Playlist(hls::playlist::Error),
     Recipe(recipe::Error),
-    Source(source::Error),
+    Playable(playable::Error),
     /// A segment that does not decrypt.
     Decryption(hls::decrypt::Error),
     /// An AES-128 key that is not 16 bytes long.
@@ -119,7 +119,7 @@ impl Localized for Cause {
             Self::Network(error) => error.text(language),
             Self::Playlist(error) => error.text(language),
             Self::Recipe(error) => error.text(language),
-            Self::Source(error) => error.text(language),
+            Self::Playable(error) => error.text(language),
             Self::Decryption(hls::decrypt::Error::Length) => text!(language, "live-decryption-length"),
             Self::Decryption(hls::decrypt::Error::Padding) => text!(language, "live-decryption-padding"),
             Self::KeyLength => text!(language, "live-key-length"),
@@ -159,7 +159,7 @@ impl Localized for Stall {
 
 display_in_english!(Interruption, Cause, Stall);
 
-/// What a live source shows the screens.
+/// What a live stream shows the screens.
 #[derive(Clone, Default, Debug)]
 pub struct Stats {
     /// The heights of its variants, lowest first, for choosing a quality.
