@@ -6,11 +6,12 @@
 use std::collections::BTreeMap;
 
 use mana_core::language::{Language, Localized};
-use mana_core::session::{Candidates, Failure};
+use mana_core::session::{Candidates, Failure, Program, State, Stats};
 use mana_core::source::Selection;
 use mana_core::source::run::{self, Candidate};
 use mana_core::text;
 
+use super::App;
 use super::channel_list;
 use super::gfx::Renderer;
 use super::hits::{Hits, Target};
@@ -165,6 +166,36 @@ impl SignalsMenu {
 fn label(candidate: &Candidate, index: usize) -> String {
     let field = |key: &str| candidate.fields.get(key).filter(|v| !v.is_empty()).cloned();
     field("label").or_else(|| field("id")).unwrap_or_else(|| format!("{}", index + 1))
+}
+
+impl App {
+    /// Plays the signal at `index` of the menu, which stays for Left.
+    pub(super) fn play_signal(&mut self, index: usize) {
+        let Some(mut menu) = self.signals.take() else { return };
+        let chosen = menu.choose(index);
+        let name = menu.name.clone();
+        if let Some(selection) = chosen {
+            self.start(name, Program::Source(selection));
+        }
+        self.signals = Some(menu);
+        self.signals_open = false;
+    }
+
+    /// Takes the signals once they come, playing the only one at once, and
+    /// opens the menu again when the signal in use failed.
+    pub(super) fn refresh_signals(&mut self) {
+        let Some(menu) = &mut self.signals else { return };
+        if menu.refresh() && menu.candidates().len() == 1 {
+            self.play_signal(0);
+            return;
+        }
+        if menu.in_use()
+            && let Some(Stats { state: State::Failed(failure), .. }) = self.session.stats()
+        {
+            menu.failed(failure);
+            self.signals_open = true;
+        }
+    }
 }
 
 #[cfg(test)]

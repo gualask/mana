@@ -12,6 +12,7 @@ mod language;
 mod list_updates;
 mod loader;
 pub mod logos;
+mod play;
 mod qr;
 pub mod quality_menu;
 mod search;
@@ -31,11 +32,10 @@ use language::Languages;
 pub use loader::REDRAW as LOADER_REDRAW;
 use logos::Logos;
 use mana_core::catalog::folder::Folders;
-use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::catalog::update::{self, Updater};
-use mana_core::language::{Language, Localized};
-use mana_core::session::{Failure, Program, Session, State, Stats};
+use mana_core::session::{Session, Stats};
 use quality_menu::QualityMenu;
+use play::Message;
 use search::Search;
 use signals_menu::SignalsMenu;
 use setup::Setup;
@@ -60,23 +60,6 @@ const OK: Color = Color::hex(palette::OK);
 pub enum Outcome {
     Continue,
     Exit,
-}
-
-/// What the home screen says went wrong, kept as it happened: it reads in
-/// the language of each frame.
-enum Message {
-    /// The channel cannot be played.
-    Unplayable { channel: Box<Channel>, error: ChannelError },
-    NotStarted(Failure),
-}
-
-impl Localized for Message {
-    fn text(&self, language: Language) -> String {
-        match self {
-            Self::Unplayable { channel, error } => format!("{}: {}", channel.title(language), error.text(language)),
-            Self::NotStarted(failure) => failure.text(language),
-        }
-    }
 }
 
 pub struct App {
@@ -221,29 +204,6 @@ impl App {
         self.session.stats()
     }
 
-    /// Plays the clip at `index`, after stopping what was playing.
-    pub fn play_clip(&mut self, index: usize) {
-        self.close_folder();
-        self.focus = self.channels.len() + index;
-        self.play_focused();
-    }
-
-    /// Plays the channel at `index`; returns false, with the reason on the
-    /// home screen, when it cannot be played.
-    pub fn play_channel(&mut self, index: usize) -> bool {
-        self.channels.set_focus(index);
-        self.focus = index;
-        match self.play_focused_channel() {
-            Ok(()) => true,
-            Err(error) => {
-                if let Some(channel) = self.channels.focused().cloned().map(Box::new) {
-                    self.message = Some(Message::Unplayable { channel, error });
-                }
-                false
-            }
-        }
-    }
-
     /// Whether a viewing stopped is still ending its threads.
     pub fn is_stopping(&self) -> bool {
         self.session.is_stopping()
@@ -284,74 +244,6 @@ impl App {
             self.handle_video(action);
         }
         Outcome::Continue
-    }
-
-    /// Plays the focused channel; the reason it cannot be played, if so.
-    fn play_focused_channel(&mut self) -> Result<(), ChannelError> {
-        let Some(channel) = self.channels.focused().cloned() else { return Ok(()) };
-        self.play(channel)
-    }
-
-    /// Plays `channel`, or opens it when it is a folder; the reason it
-    /// cannot be played, if so.
-    fn play(&mut self, channel: Channel) -> Result<(), ChannelError> {
-        let name = channel.title(self.languages.current()).to_string();
-        let program = match channel.play? {
-            Play::Folder(folder) => {
-                self.open_folder(folder);
-                return Ok(());
-            }
-            Play::Stream(playable) => Program::Live(playable),
-            // Several signals: the viewer chooses one, what plays goes on.
-            Play::Source(selection) if selection.source.sources.is_some() => {
-                self.signals = Some(SignalsMenu::ask(name, selection));
-                self.signals_open = true;
-                return Ok(());
-            }
-            Play::Source(selection) => Program::Source(selection),
-        };
-        self.start(name, program);
-        Ok(())
-    }
-
-    /// Plays the signal at `index` of the menu, which stays for Left.
-    fn play_signal(&mut self, index: usize) {
-        let Some(mut menu) = self.signals.take() else { return };
-        let chosen = menu.choose(index);
-        let name = menu.name.clone();
-        if let Some(selection) = chosen {
-            self.start(name, Program::Source(selection));
-        }
-        self.signals = Some(menu);
-        self.signals_open = false;
-    }
-
-    /// Takes the signals once they come, playing the only one at once, and
-    /// opens the menu again when the signal in use failed.
-    fn refresh_signals(&mut self) {
-        let Some(menu) = &mut self.signals else { return };
-        if menu.refresh() && menu.candidates().len() == 1 {
-            self.play_signal(0);
-            return;
-        }
-        if menu.in_use()
-            && let Some(Stats { state: State::Failed(failure), .. }) = self.session.stats()
-        {
-            menu.failed(failure);
-            self.signals_open = true;
-        }
-    }
-
-    /// Starts a viewing with the playback settings of the files as they are
-    /// now, read again each time so they can change over SSH; a failure to
-    /// start shows on the home screen. The settings screen closes, with its
-    /// page.
-    fn start(&mut self, name: String, program: Program) {
-        self.setup = None;
-        self.signals = None;
-        self.signals_open = false;
-        self.info.started();
-        self.message = self.session.play(name, program, settings::load().playback).err().map(Message::NotStarted);
     }
 
     /// Draws the frame on a surface of `surface` drawable pixels.
