@@ -39,7 +39,7 @@ pub(super) fn run(
             let answer = engine.send(at, Request { method, url, headers, body })?;
             Ok(Value::Response(Rc::new(answer)))
         }
-        Operation::ListMap { list, map, filter } => {
+        Operation::ListMap { list, map, filter, present } => {
             let entries = scope.fill(list).and_then(|v| v.list()).map_err(changed)?;
             if entries.len() > MAX_ENTRIES {
                 return Err(Failure::limit(at, format!("a list of {} entries, at most {MAX_ENTRIES}", entries.len())));
@@ -47,7 +47,7 @@ pub(super) fn run(
             let mut mapped = Vec::new();
             for entry in &entries {
                 let scope = Scope { inputs, steps, entry: Some(entry) };
-                if !keep(entry, filter, &scope).map_err(changed)? {
+                if !keep(entry, filter, &scope).map_err(changed)? || !present.iter().all(|field| has(entry, field)) {
                     continue;
                 }
                 mapped.push(match map {
@@ -98,6 +98,7 @@ fn pure(operation: &Operation, scope: &Scope) -> Result<Value, String> {
         Operation::Protobuf { from } => protobuf(&scope.fill(from)?.bytes()?)?,
         Operation::TextMatch { from, pattern } => Value::Text(group(pattern, &scope.text(from)?)?),
         Operation::Text { template } => Value::Text(scope.text(template)?),
+        Operation::Date { from, format, zone } => Value::Text(date(&scope.text(from)?, format, zone)?),
         Operation::UrlParam { from, name } => {
             let url = Url::parse(&scope.text(from)?).map_err(|e| format!("not a URL: {e}"))?;
             let found = url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
@@ -154,6 +155,27 @@ fn pure(operation: &Operation, scope: &Scope) -> Result<Value, String> {
     })
 }
 
+/// `text` in `format` at the offset `zone`, as RFC 3339 in UTC; format and
+/// zone are checked before a source is used.
+fn date(text: &str, format: &str, zone: &str) -> Result<String, String> {
+    let offset = crate::source::date::offset(zone).unwrap_or(0);
+    Ok(crate::source::date::rfc3339(crate::source::date::parse(text, format, offset)?))
+}
+
+/// Whether `entry` has `field`, not empty: a text, a list or an object
+/// with something in it, or any other value.
+fn has(entry: &Value, field: &str) -> bool {
+    match entry.get(field) {
+        Ok(Value::Text(text)) => !text.is_empty(),
+        Ok(Value::List(list)) => !list.is_empty(),
+        Ok(Value::Json(Json::Null)) | Err(_) => false,
+        Ok(Value::Json(Json::String(text))) => !text.is_empty(),
+        Ok(Value::Json(Json::Array(list))) => !list.is_empty(),
+        Ok(Value::Json(Json::Object(map))) => !map.is_empty(),
+        Ok(_) => true,
+    }
+}
+
 fn texts(found: Vec<String>) -> Value {
     Value::List(found.into_iter().map(Value::Text).collect())
 }
@@ -176,6 +198,7 @@ fn record(fields: &BTreeMap<String, Field>, scope: &Scope) -> Result<BTreeMap<St
         let text = match field {
             Field::Value(template) => scope.text(template)?,
             Field::Match { from, pattern } => group(pattern, &scope.text(from)?)?,
+            Field::Date { from, format, zone } => date(&scope.text(from)?, format, zone)?,
         };
         record.insert(name.clone(), Value::Text(text));
     }

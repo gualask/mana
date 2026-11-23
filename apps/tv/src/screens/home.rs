@@ -8,13 +8,13 @@ use mana_core::language::{Language, Localized};
 use mana_core::session::{Program, STREAM_EXTENSION};
 use mana_core::text;
 
-use super::channel_list::{LOGO_SIZE, draw_logo};
+use super::channel_list::{self, LOGO_SIZE, draw_logo};
 use super::gfx::Renderer;
 use super::hits::Target;
 use super::list_updates::ListState;
 use super::text::Text;
 use super::{App, BACKGROUND, ERROR, FOCUS, MUTED, Outcome, ROW, TEXT};
-use crate::platform::DATA_DIR;
+use crate::platform::{DATA_DIR, clock};
 use crate::platform::keys::Action;
 
 /// Test clips are copied here over SSH (see dev/tv/clips.py).
@@ -146,7 +146,7 @@ impl App {
     fn draw_rows(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
         let channels = self.channels.channels();
         let with_logos = channels.iter().any(|c| c.logo.is_some());
-        let first = self.home_first;
+        let (first, now) = (self.home_first, clock::now());
         let shown = first..(first + VISIBLE_ROWS).min(self.rows());
         for i in shown.clone() {
             let y = (260.0 + (i - first) as f32 * 96.0) * s;
@@ -162,7 +162,11 @@ impl App {
             }
             let text_x = if with_logos { 260.0 * s } else { 156.0 * s };
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
-            t.draw(r, text_x, y + 20.0 * s, 36.0 * s, colour, &channel.title(language));
+            let title_x = match channel_list::starts(channel, now) {
+                Some(time) => text_x + t.draw(r, text_x, y + 20.0 * s, 36.0 * s, MUTED, &time) + 20.0 * s,
+                None => text_x,
+            };
+            t.draw(r, title_x, y + 20.0 * s, 36.0 * s, colour, &channel.title(language));
         }
         let logos = shown.filter_map(|i| channels.get(i)?.logo.as_deref());
         self.logos.want(logos);

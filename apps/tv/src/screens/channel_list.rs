@@ -11,6 +11,7 @@ use super::hits::{Hits, Target};
 use super::logos::Logos;
 use super::text::Text;
 use super::{BACKGROUND as PANEL, ERROR, FOCUS, MUTED, TEXT};
+use crate::platform::clock;
 
 const VISIBLE_ROWS: usize = 12;
 /// Rows moved by Left/Right.
@@ -42,6 +43,7 @@ impl ChannelList {
                 name: Some(format!("{:04}  {} {} HD", i + 1, GENRES[i % GENRES.len()], i / 6 + 1)),
                 logo: None,
                 group: None,
+                starts_at: None,
                 play: Err(ChannelError::NoStream),
             })
             .collect();
@@ -126,7 +128,7 @@ impl ChannelList {
         let (focus, count) = (self.focus + 1, self.channels.len());
         let header = text!(language, "channels-header", focus = focus, count = count);
         t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &header);
-        let first = self.first;
+        let (first, now) = (self.first, clock::now());
         let with_logos = self.channels.iter().any(|c| c.logo.is_some());
         let text_x = if with_logos { x + 136.0 * s } else { x + 36.0 * s };
         for (i, channel) in self.channels.iter().enumerate().skip(first).take(VISIBLE_ROWS) {
@@ -141,7 +143,11 @@ impl ChannelList {
                 draw_logo(r, logos, logo, x + 28.0 * s, top + 5.0 * s, s);
             }
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
-            t.draw(r, text_x, top + 12.0 * s, 32.0 * s, colour, &channel.title(language));
+            let title_x = match starts(channel, now) {
+                Some(time) => text_x + t.draw(r, text_x, top + 12.0 * s, 32.0 * s, MUTED, &time) + 20.0 * s,
+                None => text_x,
+            };
+            t.draw(r, title_x, top + 12.0 * s, 32.0 * s, colour, &channel.title(language));
         }
         if let Some(notice) = &self.notice {
             let top = y + 90.0 * s + VISIBLE_ROWS as f32 * row + 10.0 * s;
@@ -168,4 +174,14 @@ pub fn draw_logo(r: &mut Renderer, logos: &mut Logos, url: &str, x: f32, y: f32,
     if !logos.draw(r, url, x, y, w, h) {
         r.rect(x, y, w, h, LOGO_BOX);
     }
+}
+
+/// When an event starts, in the TV's local time: `20:30` today, else with
+/// the day, `24/11 20:30`; None for a channel.
+pub(super) fn starts(channel: &Channel, now: i64) -> Option<String> {
+    let at = clock::local(channel.starts_at?);
+    let (day, today) = (at.div_euclid(86_400), clock::local(now).div_euclid(86_400));
+    let date = mana_core::source::date::rfc3339(at);
+    let time = &date[11..16];
+    Some(if day == today { time.to_string() } else { format!("{}/{} {time}", &date[8..10], &date[5..7]) })
 }

@@ -53,6 +53,9 @@ header = { "User-Agent" = "…" }  # optional
 
 [[include]]
 m3u = "https://lists.invalid/channels.m3u"
+
+[[include]]
+source = "example"                 # its catalogue's items, as channels
 ```
 
 Channels and included M3U lists appear in file order. A channel has `name`
@@ -64,6 +67,14 @@ its other fields (`id` above) are the item's, read as `{input.item.id}`;
 `{input.device}` is a UUID created when a channel with a source is first
 read and kept in `/media/developer/mana/device`. The source gives the
 headers of its requests and streams, so such a channel has no `header`.
+
+An `[[include]]` with `source` puts there the items of that source's
+catalogue, each a channel of the source: events with a start time first,
+by time, which the screens show in the TV's local time, then the others in
+the catalogue's order. The catalogue is read with the list, and again when
+the channel list or the home screen opens if it is more than 5 minutes
+old ([list_updates.rs](../apps/tv/src/screens/list_updates.rs)); its copy
+is kept, as an included M3U list's, for a start without network.
 
 The keys are in English: a list written with the Italian keys of the first
 versions (`canali` at the root) is refused, with an error that names

@@ -60,8 +60,12 @@ impl App {
             Action::Back => {
                 self.session.stop();
                 log!("playback stopped");
+                self.refresh_catalogues();
             }
-            Action::Select => self.channels_open = true,
+            Action::Select => {
+                self.channels_open = true;
+                self.refresh_catalogues();
+            }
             Action::Up | Action::Down => self.info.toggle(),
             Action::Right => self.open_quality_menu(),
             Action::Left => self.signals_open = self.signals.is_some(),

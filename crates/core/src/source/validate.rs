@@ -128,6 +128,7 @@ fn check_entry(source: &Source, scope: &Scope, map: &Mapping, filter: &BTreeMap<
         Mapping::Fields(item) => item.values().try_for_each(|field| match field {
             Field::Value(template) => check_template(scope, template, Kind::Text),
             Field::Match { from, pattern } => check_template(scope, from, Kind::Text).and_then(|()| check_pattern(&scope.at, pattern)),
+            Field::Date { from, .. } => check_template(scope, from, Kind::Text),
         }),
         Mapping::Call { recipe, input } => {
             check_call(source, &scope.at, recipe, input)?;

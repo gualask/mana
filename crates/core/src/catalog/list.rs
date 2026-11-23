@@ -119,6 +119,9 @@ pub enum Entry {
     Channel(Channel),
     /// The URL of an M3U list whose channels go here.
     Include(Url),
+    /// A source whose catalogue's items go here, as channels: its name in
+    /// the list, and the source with the device.
+    Catalogue(String, Selection),
 }
 
 /// The sources of the list by name, checked, or why they cannot be used.
@@ -139,11 +142,9 @@ pub fn parse(text: &str, device: impl Fn() -> Option<String>) -> Result<List, Er
         placed.push((section, Entry::Channel(channel(value, &sources, &device))));
     }
     for (section, table) in tables(&root, key::INCLUDE, &mut skipped) {
-        match string(table, key::M3U).map(|m3u| m3u.map(|m3u| Url::parse(&m3u).map_err(|e| format!("{m3u}: {e}")))) {
-            Ok(Some(Ok(url))) => placed.push((section, Entry::Include(url))),
-            Ok(Some(Err(error))) => skipped.push(format!("inclusion: {error}")),
-            Err(error) => skipped.push(format!("inclusion: {error}")),
-            Ok(None) => skipped.push(format!("inclusion without `{}`", key::M3U)),
+        match included(table, &sources, &device) {
+            Ok(entry) => placed.push((section, entry)),
+            Err(reason) => skipped.push(format!("inclusion: {reason}")),
         }
     }
     // Channels and inclusions are two arrays: their order is that of their
@@ -179,6 +180,30 @@ fn tables<'a, 'i>(root: &'a DeTable<'i>, key: &str, skipped: &mut Vec<String>) -
         .collect()
 }
 
+/// What an `[[include]]` puts in its place: an M3U list, or the catalogue
+/// of a source of the list; why it puts nothing, for the log.
+fn included(table: &DeTable, sources: &Sources, device: &impl Fn() -> Option<String>) -> Result<Entry, String> {
+    let (m3u, source) = (string(table, key::M3U).map_err(|e| e.to_string())?, string(table, key::SOURCE).map_err(|e| e.to_string())?);
+    match (m3u, source) {
+        (Some(m3u), None) => Url::parse(&m3u).map(Entry::Include).map_err(|e| format!("{m3u}: {e}")),
+        (None, Some(name)) => match sources.get(&name) {
+            Some(Ok(source)) if source.catalogue.is_some() => {
+                let selection = Selection {
+                    source: source.clone(),
+                    item: Item { fields: BTreeMap::new() },
+                    device: device().unwrap_or_default(),
+                    candidate: None,
+                };
+                Ok(Entry::Catalogue(name, selection))
+            }
+            Some(Ok(_)) => Err(format!("source {name} has no catalogue")),
+            Some(Err(error)) => Err(format!("source {name}: {error}")),
+            None => Err(format!("source {name} does not exist")),
+        },
+        _ => Err(format!("one of `{}` and `{}` is needed", key::M3U, key::SOURCE)),
+    }
+}
+
 /// The list's `[sources.NAME]`, each read in the data model a source file
 /// has and checked. A broken source makes its channels unavailable, with
 /// the reason; `sources` that is not a table of tables is skipped.
@@ -204,6 +229,7 @@ fn channel(table: &DeTable, sources: &Sources, device: &impl Fn() -> Option<Stri
         name: name.ok().flatten(),
         logo: string(table, key::LOGO).ok().flatten(),
         group: string(table, key::GROUP).ok().flatten(),
+        starts_at: None,
         play,
     }
 }

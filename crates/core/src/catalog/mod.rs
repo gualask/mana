@@ -22,6 +22,8 @@ pub struct Channel {
     pub logo: Option<String>,
     /// The group the list puts it in, if any.
     pub group: Option<String>,
+    /// When an event of a source's catalogue starts, in seconds since 1970.
+    pub starts_at: Option<i64>,
     /// What it plays, or why it cannot be played: the list gives no stream,
     /// or a broken one.
     pub play: Result<Play, ChannelError>,

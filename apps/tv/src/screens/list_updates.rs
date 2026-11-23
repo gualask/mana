@@ -2,6 +2,7 @@
 //! downloads of the list) and how a download replaces those shown.
 
 use std::path::Path;
+use std::time::Duration;
 
 use mana_core::catalog::update::{self, Updater};
 use mana_core::catalog::{Channel, m3u};
@@ -11,6 +12,10 @@ use url::Url;
 use super::App;
 use super::channel_list::ChannelList;
 use crate::platform::DATA_DIR;
+
+/// How old the sources' catalogues may be when the list or the home screen
+/// opens: events start and end, signals come shortly before.
+const CATALOGUE_AGE: Duration = Duration::from_secs(5 * 60);
 
 /// The state of the channel list, as the screens say it.
 pub(super) enum ListState<'a> {
@@ -52,6 +57,15 @@ impl App {
             }
         }
         self.sync_page();
+    }
+
+    /// Reads the sources' catalogues again, with the list, when the copy
+    /// shown is CATALOGUE_AGE old: called as the list or the home screen
+    /// opens.
+    pub(super) fn refresh_catalogues(&mut self) {
+        if let Some(updater) = &mut self.updater {
+            updater.refresh_catalogues(CATALOGUE_AGE);
+        }
     }
 
     /// Shows `channels` instead, on both screens, each focus kept on the

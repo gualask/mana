@@ -26,13 +26,18 @@ pub enum Operation {
     /// The group of `pattern`'s first match.
     TextMatch { from: Template, pattern: String },
     /// Each entry of `list` made into the fields of `item`, or into what a
-    /// recipe gives for it; only the entries whose fields equal `filter`.
-    ListMap { list: Template, map: Mapping, filter: BTreeMap<String, Template> },
+    /// recipe gives for it; only the entries whose fields equal `filter`
+    /// and whose fields `present` are there and not empty.
+    ListMap { list: Template, map: Mapping, filter: BTreeMap<String, Template>, present: Vec<String> },
     Text { template: Template },
     /// A query parameter, decoded.
     UrlParam { from: Template, name: String },
     /// The query after `name=`, as it is, to its end.
     UrlQueryAfter { from: Template, name: String },
+    /// A date as the source writes it, in `format` (`%Y %m %d %H %M %S` and
+    /// text), at the UTC offset `zone` (`+08:00`), as an instant: RFC 3339
+    /// in UTC, `2026-11-23T12:30:00Z`. `unix` and `unix_ms` read numbers.
+    Date { from: Template, format: String, zone: String },
     /// The URL with its query parameter `name` set to `value`, the others kept.
     UrlSet { from: Template, name: String, value: Template },
     Base64Decode { from: Template, alphabet: Alphabet },
@@ -89,11 +94,13 @@ pub enum Mapping {
     Call { recipe: String, input: BTreeMap<String, Template> },
 }
 
-/// A field of `list.map`: a template, or a group of a pattern applied to it.
+/// A field of `list.map`: a template, a group of a pattern applied to it,
+/// or a date read as the `date` operation reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Field {
     Value(Template),
     Match { from: Template, pattern: String },
+    Date { from: Template, format: String, zone: String },
 }
 
 /// What a value is, as far as it can be known before running: what a step
@@ -182,7 +189,7 @@ impl Operation {
                 Self::TextMatch { from: f.required_template("from")?, pattern: f.required_text("pattern")? }
             }
             "list.map" => {
-                let f = fields(&["list", "item", "call", "input", "where"])?;
+                let f = fields(&["list", "item", "call", "input", "where", "present"])?;
                 let map = match (f.table("item")?, f.text("call")?) {
                     (Some(item), None) if f.get("input").is_none() => {
                         let mut fields = BTreeMap::new();
@@ -194,9 +201,18 @@ impl Operation {
                     (None, Some(recipe)) => Mapping::Call { recipe, input: f.templates("input")? },
                     _ => return Err(Error::OneOf { at: at.into(), choices: "`item`, `call` with its `input`".into() }),
                 };
-                Self::ListMap { list: f.required_template("list")?, map, filter: f.templates("where")? }
+                Self::ListMap { list: f.required_template("list")?, map, filter: f.templates("where")?, present: f.texts("present")? }
             }
             "text" => Self::Text { template: fields(&["template"])?.required_template("template")? },
+            "date" => {
+                let f = fields(&["from", "format", "zone"])?;
+                let format = f.required_text("format")?;
+                let zone = date_zone(&f)?;
+                if let Err(detail) = super::date::check_format(&format) {
+                    return Err(f.invalid("format", &detail));
+                }
+                Self::Date { from: f.required_template("from")?, format, zone }
+            }
             "url.param" | "url.query_after" => {
                 let f = fields(&["from", "name"])?;
                 let (from, name) = (f.required_template("from")?, f.required_text("name")?);
@@ -282,7 +298,7 @@ impl Operation {
             Self::Next { .. } => Kind::Next,
             Self::HtmlAttr { .. } | Self::TextMatch { .. } | Self::Text { .. } | Self::UrlParam { .. } => Kind::Text,
             Self::UrlQueryAfter { .. } | Self::UrlSet { .. } | Self::Base64Encode { .. } | Self::HexEncode { .. } => Kind::Text,
-            Self::Rot47 { .. } | Self::Md5 { .. } => Kind::Text,
+            Self::Rot47 { .. } | Self::Md5 { .. } | Self::Date { .. } => Kind::Text,
         }
     }
 
@@ -308,6 +324,7 @@ impl Operation {
             Self::Protobuf { from } | Self::Base64Encode { from, .. } | Self::HexEncode { from } => vec![("from", from, Bytes)],
             Self::ListMap { list, .. } => vec![("list", list, List)],
             Self::Text { template } => vec![("template", template, Text)],
+            Self::Date { from, .. } => vec![("from", from, Text)],
             Self::UrlParam { from, .. } | Self::UrlQueryAfter { from, .. } => vec![("from", from, Text)],
             Self::UrlSet { from, value, .. } => vec![("from", from, Text), ("value", value, Text)],
             Self::Base64Decode { from, .. } | Self::HexDecode { from } => vec![("from", from, Text)],
@@ -338,9 +355,27 @@ fn field(at: &str, name: &str, value: &Value) -> Result<Field, Error> {
     match value {
         Value::String(text) => Template::parse(text).map(Field::Value).map_err(|detail| Error::invalid(at, name, &detail)),
         Value::Object(_) => {
-            let f = Fields::new(&format!("{at}.{name}"), value, &["from", "pattern"])?;
-            Ok(Field::Match { from: f.required_template("from")?, pattern: f.required_text("pattern")? })
+            let f = Fields::new(&format!("{at}.{name}"), value, &["from", "pattern", "format", "zone"])?;
+            let from = f.required_template("from")?;
+            match (f.text("pattern")?, f.text("format")?) {
+                (Some(pattern), None) if f.get("zone").is_none() => Ok(Field::Match { from, pattern }),
+                (None, Some(format)) => {
+                    let zone = date_zone(&f)?;
+                    super::date::check_format(&format).map_err(|detail| f.invalid("format", &detail))?;
+                    Ok(Field::Date { from, format, zone })
+                }
+                _ => Err(Error::OneOf { at: format!("{at}.{name}"), choices: "`pattern`, `format` with its `zone`".into() }),
+            }
         }
-        _ => Err(Error::invalid(at, name, "neither a text nor `{ from, pattern }`")),
+        _ => Err(Error::invalid(at, name, "neither a text nor `{ from, pattern }` nor `{ from, format, zone }`")),
+    }
+}
+
+/// The `zone` of a date, UTC when not given.
+fn date_zone(f: &Fields) -> Result<String, Error> {
+    let zone = f.text("zone")?.unwrap_or_else(|| "+00:00".into());
+    match super::date::offset(&zone) {
+        Some(_) => Ok(zone),
+        None => Err(f.invalid("zone", "an offset as `+08:00` or `-05:30`")),
     }
 }

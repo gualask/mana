@@ -68,7 +68,7 @@ impl Entry {
             None => Err(ChannelError::NoStream),
         };
         let name = Some(self.name).filter(|name| !name.is_empty());
-        Channel { name, logo: self.logo, group: self.group, play }
+        Channel { name, logo: self.logo, group: self.group, starts_at: None, play }
     }
 }
 
@@ -112,7 +112,7 @@ mod tests {
     fn channel(name: &str, logo: Option<&str>, url: Option<&str>, headers: &[(&str, &str)]) -> Channel {
         let headers = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
         let play = url.map(|url| Play::Stream(Playable::direct(url.parse().unwrap(), headers))).ok_or(ChannelError::NoStream);
-        Channel { name: Some(name.into()), logo: logo.map(Into::into), group: None, play }
+        Channel { name: Some(name.into()), logo: logo.map(Into::into), group: None, starts_at: None, play }
     }
 
     #[test]

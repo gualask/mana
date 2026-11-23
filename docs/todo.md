@@ -9,6 +9,7 @@
 - [x] Connect the resolvers of the encrypted and binary fixtures through the registry — done when the runtime resolves both cases and rejects tampered wrappers or wrong sessions ([scenarios](local-lab.md#three-origins-and-available-scenarios)).
 - [ ] Connect the e2e tests to the runtime and the application session — done when the player performs fallback, renewal after expiry and cancellation on channel change, discarding late results; the suite also verifies empty events and denials ([e2e](local-lab.md#moving-to-player-e2e-tests)).
 - [x] Choose an event's signal from a list — done when OK on a channel or event whose source gives several candidates shows them with their labels, choosing one plays it, Mana no longer passes to the next one by itself, and the list can be opened again while watching to change signal ([playing a channel with a source](channel-list.md#playing-a-channel-with-a-source)).
+- [x] Show a source's catalogue in the list — done when `[[include]] source = …` puts the catalogue's items there as channels, events with signals only and by time, their time in the TV's local time, the catalogue read again when the list or the home screen opens if older than 5 minutes, its copy kept for a start without network ([channel list](channel-list.md#format)).
 - [ ] Build the desktop app — done when `apps/desktop` on the Mac plays a lab live stream and a clip with synchronized audio, measured with `dev/tv/avsync.py`, the channel list scrolls over the video at 50 fps, and `.local/rune-ui/` is deleted ([desktop client](architecture.md#desktop-client)).
 
 ## Open questions
@@ -17,10 +18,6 @@
   - Evidence: the break opens with a discontinuity and a bumper from the path `…/Pluto_TV_OandO/clip/…_ad_bumper_…` or `…/pluto_tv_o_o/clip/…_ad_bumper_…`; the following clips come from `/mp4/v1/…/p(…/video_*.mp4)/id3(p=clik,…)`, converted on the fly from the video track alone, without audio. The break points match across different sessions (segment 269 on the TV and in the probe), but the content of the break changes between sessions. It is not yet known which following clips are ads and where the break ends.
   - Evidence (17 November): the playlist has no ad markers (`CUE-OUT`, `DATERANGE`) and holds 5 segments, about 25 s, so in a live stream a break can be covered but not skipped. Each episode is a complete HLS asset on the CDN (`…/clip/<id>_int/…/hls/<inizio>-end/…`), playable from any point.
   - To decide: the user's choice is postponed. The option that interests them, for later, is playing the episode from the complete asset instead of the stitched live stream, but that falls outside the live-only scope; Pluto's terms probably do not allow it.
-- How does the interface show a source's catalogue as channels or events?
-  - Evidence (23 November): the Rai source's catalogue lists 15 channels, Pluto's guide 129; a live event of an unofficial sports source, played on the TV as a channel of a test list, offered three signals: the direct HLS blocked by the home DNS, one player that plays, one answering 403.
-  - Proposal: its catalogue is a group in the home screen and over the video; events by time, those without signals dimmed with the reason; the catalogue read again when the list opens if the copy is a few minutes old.
-  - To decide: when to read the catalogue again, how future and ended events show ([source files](configuration.md#not-built-yet)).
 - Offer the automatic passing to the next signal as a setting?
   - Evidence (23 November): the user wants to choose the signal from a list rather than have Mana pass to the next one by itself, which keeps a signal that plays badly as long as it does not stop.
   - To decide: whether the setting is worth its complexity, once the list of signals exists.

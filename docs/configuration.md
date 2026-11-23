@@ -107,8 +107,9 @@ There is no conditional between steps: choices live only in routes.
 | `nextflight` | text → JSON | `from`, `key`: the value after `"key":` in the payloads pushed to `self.__next_f` |
 | `protobuf` | bytes → record (field number → values; an absent field is an empty list, as in Protobuf) | `from` |
 | `text.match` | text → text | `from`, `pattern` (one group) |
-| `list.map` | list → list | `list`; `item` (each field a template or `{ from, pattern }`), or `call` and `input` to make each entry the result of a recipe (`{item}` is the entry); `where` (fields equal to templates) |
+| `list.map` | list → list | `list`; `item` (each field a template, `{ from, pattern }`, or `{ from, format, zone }` as `date` reads it), or `call` and `input` to make each entry the result of a recipe (`{item}` is the entry); `where` (fields equal to templates); `present` (fields there and not empty) |
 | `text` | → text | `template` |
+| `date` | text → text | `from`, `format` (`%Y %m %d %H %M %S` and text, or `unix`, `unix_ms`), `zone` (`+08:00`, UTC when absent): the instant as RFC 3339 in UTC, as an item's `starts_at` |
 | `url.param` | text → text (decoded) | `from`, `name` |
 | `url.query_after` | text → text (raw, to the end) | `from`, `name` |
 | `url.set` | text → text | `from`, `name`, `value`: one query parameter set, the others kept |
@@ -243,8 +244,6 @@ duplicate keys are a TOML error.
 ## Not built yet
 
 - JSON import into the same `Source`, with the file in the errors.
-- A source's catalogue as channels or events in the interface
-  ([Next steps](todo.md)).
 - Catalogue pagination: no case has needed it.
 
 The order is in [Next steps](todo.md).

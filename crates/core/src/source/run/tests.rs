@@ -341,7 +341,8 @@ fn values_convert_as_the_contract_says() {
          [[resolve.steps]]\nid = \"r\"\nop = \"rot47\"\nfrom = \"lab\"\n\
          [[resolve.steps]]\nid = \"q\"\nop = \"url.query_after\"\nfrom = \"https://p.example/?a=1&url=https://m.example/x?t=1&txTime=2\"\nname = \"url\"\n\
          [[resolve.steps]]\nid = \"u\"\nop = \"url.set\"\nfrom = \"https://p.example/?a=1&b=2\"\nname = \"a\"\nvalue = \"3\"\n\
-         [[resolve.steps]]\nid = \"s\"\nop = \"stream\"\nurl = \"{q}\"\nheaders = { h = \"{h}\", m = \"{m}\", r = \"{r}\", u = \"{u}\", c = \"{r|component}\" }\n",
+         [[resolve.steps]]\nid = \"d\"\nop = \"date\"\nfrom = \"23/11/2026 20:30\"\nformat = \"%d/%m/%Y %H:%M\"\nzone = \"+08:00\"\n\
+         [[resolve.steps]]\nid = \"s\"\nop = \"stream\"\nurl = \"{q}\"\nheaders = { h = \"{h}\", m = \"{m}\", r = \"{r}\", u = \"{u}\", c = \"{r|component}\", d = \"{d}\" }\n",
     );
     let resolved = Web::new(vec![]).engine(&source).resolve(&candidate(&[("id", "x")]), &item(&[])).unwrap();
     assert_eq!(resolved.url.as_str(), "https://m.example/x?t=1&txTime=2");
@@ -351,4 +352,5 @@ fn values_convert_as_the_contract_says() {
     assert_eq!(got["r"], "=23");
     assert_eq!(got["u"], "https://p.example/?b=2&a=3");
     assert_eq!(got["c"], "%3D23");
+    assert_eq!(got["d"], "2026-11-23T12:30:00Z");
 }

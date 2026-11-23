@@ -396,6 +396,27 @@
                       "pattern"
                     ],
                     "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "$ref": "#/$defs/template"
+                      },
+                      "format": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "zone": {
+                        "type": "string",
+                        "pattern": "^(Z|[+-][0-9]{2}:[0-9]{2})$"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "format"
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -409,6 +430,12 @@
             },
             "input": {
               "$ref": "#/$defs/templates"
+            },
+            "present": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -864,6 +891,35 @@
             "id",
             "op",
             "candidate"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "date"
+            },
+            "from": {
+              "$ref": "#/$defs/template"
+            },
+            "format": {
+              "type": "string",
+              "minLength": 1
+            },
+            "zone": {
+              "type": "string",
+              "pattern": "^(Z|[+-][0-9]{2}:[0-9]{2})$"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "from",
+            "format"
           ],
           "additionalProperties": false
         }

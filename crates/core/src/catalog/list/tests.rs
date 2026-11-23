@@ -61,7 +61,7 @@ fn channels(list: &List) -> Vec<&Channel> {
         .iter()
         .filter_map(|entry| match entry {
             Entry::Channel(channel) => Some(channel),
-            Entry::Include(_) => None,
+            Entry::Include(_) | Entry::Catalogue(..) => None,
         })
         .collect()
 }
@@ -75,10 +75,11 @@ fn channels_and_inclusions_keep_the_file_s_order() {
         .map(|entry| match entry {
             Entry::Channel(channel) => channel.name.clone().unwrap_or_default(),
             Entry::Include(url) => url.to_string(),
+            Entry::Catalogue(name, _) => name.clone(),
         })
         .collect();
     assert_eq!(order, ["Rai 1", "https://iptv.invalid/it.m3u", "Sportitalia Live 24", "Pluto Cinema"]);
-    assert_eq!(list.skipped, ["inclusion without `m3u`"]);
+    assert_eq!(list.skipped, ["inclusion: one of `m3u` and `source` is needed"]);
 }
 
 fn selection(channel: &Channel) -> &Selection {
@@ -228,4 +229,43 @@ fn sections_of_the_wrong_kind_are_skipped() {
     let list = parse("channels = \"tutti\"\ninclude = [1]\n", device).unwrap();
     assert!(list.entries.is_empty());
     assert_eq!(list.skipped, ["`channels` is not a list of tables", "an entry of `include` is not a table"]);
+}
+
+#[test]
+fn an_inclusion_names_an_m3u_list_or_a_source_with_a_catalogue() {
+    let text = r#"
+[sources.events]
+catalogue = { items = [{ id = "e", title = "E" }] }
+[[sources.events.resolve.steps]]
+id = "stream"
+op = "stream"
+url = "https://a.invalid/{input.item.id}.m3u8"
+[sources.plain]
+[[sources.plain.resolve.steps]]
+id = "stream"
+op = "stream"
+url = "https://a.invalid/x.m3u8"
+
+[[include]]
+source = "events"
+[[include]]
+source = "plain"
+[[include]]
+source = "missing"
+[[include]]
+m3u = "https://lists.invalid/a.m3u"
+source = "events"
+"#;
+    let list = parse(text, device).unwrap();
+    let Entry::Catalogue(name, selection) = &list.entries[0] else { panic!("{:?}", list.entries) };
+    assert_eq!((name.as_str(), selection.device.as_str()), ("events", "d-1"));
+    assert_eq!(list.entries.len(), 1);
+    assert_eq!(
+        list.skipped,
+        [
+            "inclusion: source plain has no catalogue",
+            "inclusion: source missing does not exist",
+            "inclusion: one of `m3u` and `source` is needed",
+        ]
+    );
 }

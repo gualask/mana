@@ -317,3 +317,76 @@ fn a_url_chosen_that_cannot_be_saved_is_not_kept() {
     let (channels, kept) = kept(outcome(&mut updater));
     assert_eq!((names(&channels), kept), (vec!["One"], false));
 }
+
+/// A list of `channels` with the catalogue of an event source served at
+/// `address`: the events with signals, by their time in UTC+8.
+fn with_catalogue(address: &str, channels: &[&str]) -> String {
+    let channels: String = channels.iter().map(|n| format!("[[channels]]\nname = \"{n}\"\nurl = \"https://a.invalid/{n}.m3u8\"\n")).collect();
+    format!(
+        r#"[sources.events]
+[[sources.events.catalogue.steps]]
+id = "page"
+op = "http"
+url = "{address}/events.json"
+[[sources.events.catalogue.steps]]
+id = "events"
+op = "list.map"
+list = "{{page.json}}"
+present = ["signals"]
+item = {{ id = "{{item.id}}", title = "{{item.title}}", starts_at = {{ from = "{{item.time}}", format = "%Y-%m-%d %H:%M:%S", zone = "+08:00" }} }}
+[[sources.events.resolve.steps]]
+id = "stream"
+op = "stream"
+url = "https://a.invalid/{{input.item.id}}.m3u8"
+
+{channels}[[include]]
+source = "events"
+"#
+    )
+}
+
+const EVENTS: &str = r#"[
+  {"id": "late", "title": "Late", "time": "2026-11-23 22:00:00", "signals": [1]},
+  {"id": "none", "title": "No signals", "time": "2026-11-23 18:00:00", "signals": []},
+  {"id": "early", "title": "Early", "time": "2026-11-23 20:30:00", "signals": [1, 2]}
+]"#;
+
+#[test]
+fn a_source_s_catalogue_puts_its_events_with_signals_by_time() {
+    let (address, answers) = serve();
+    let dir = data_dir("catalogue");
+    answer(&answers, "/list.toml", 200, &with_catalogue(&address, &["Rai 1"]));
+    answer(&answers, "/events.json", 200, EVENTS);
+    let (_, mut updater) = Updater::start(&dir, Some(Url::parse(&format!("{address}/list.toml")).unwrap()));
+    let channels = updated(outcome(&mut updater));
+    assert_eq!(names(&channels), ["Rai 1", "Early", "Late"]);
+    assert_eq!(channels[1].starts_at, crate::source::date::instant("2026-11-23T12:30:00Z"));
+    let Ok(Play::Source(selection)) = &channels[1].play else { panic!("{:?}", channels[1].play) };
+    assert_eq!(selection.item.fields["id"], "early");
+    // The source does not answer: the saved copy of its catalogue.
+    answer(&answers, "/events.json", 503, "");
+    updater.refresh();
+    assert_eq!(names(&updated(outcome(&mut updater))), ["Rai 1", "Early", "Late"]);
+    // Nor any more: the catalogue is left out.
+    std::fs::remove_file(dir.join("list").join("events.catalogue.json")).unwrap();
+    updater.refresh();
+    assert_eq!(names(&updated(outcome(&mut updater))), ["Rai 1"]);
+}
+
+#[test]
+fn catalogues_are_read_again_only_once_they_are_old() {
+    let (address, answers) = serve();
+    let dir = data_dir("catalogue-age");
+    answer(&answers, "/list.toml", 200, &with_catalogue(&address, &[]));
+    answer(&answers, "/events.json", 200, EVENTS);
+    let (_, mut updater) = Updater::start(&dir, Some(Url::parse(&format!("{address}/list.toml")).unwrap()));
+    updated(outcome(&mut updater));
+    assert!(updater.refresh_catalogues(Duration::from_secs(60)).is_none());
+    assert!(updater.refresh_catalogues(Duration::ZERO).is_some());
+    assert!(updater.refresh_catalogues(Duration::ZERO).is_none(), "one under way");
+    updated(outcome(&mut updater));
+    answer(&answers, "/list.toml", 200, &one("Plain"));
+    updater.refresh();
+    updated(outcome(&mut updater));
+    assert!(updater.refresh_catalogues(Duration::ZERO).is_none(), "no catalogue in the list");
+}
