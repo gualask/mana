@@ -102,7 +102,17 @@ Settings live in `/media/developer/mana/mana.conf`, which persists, and in
   asking the TV; empty, a TV whose language cannot be read.
 
 The home screen shows the channels of the list, then clips and `.stream`
-files; during playback OK opens the same channels over the video. A channel
+files; during playback OK opens the same channels over the video. OK on a
+folder (a row marked `›`) shows its events in place of the channels on
+both, until Back on the home screen
+([channel list](channel-list.md#format)). «Search», right of the rows,
+opens an on-screen keyboard: as the text grows it finds, without asking
+the network, the list's channels and the events of the folders' saved
+copies whose name or group holds every word typed, regardless of case and
+accents; right goes from the keyboard to the results, OK plays one, Back
+closes the search, which is still there after what it played
+([search.rs](../apps/tv/src/screens/search.rs),
+[catalog/search.rs](../crates/core/src/catalog/search.rs)). A channel
 that cannot be played is dimmed, and OK shows the reason. The M3U list
 copied to `/tmp/mana-channels.m3u` by `python3 dev/tv/channels.py` (one
 channel per logo, with no stream) replaces the list in both; the 5,000 test

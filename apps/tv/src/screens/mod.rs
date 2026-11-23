@@ -3,6 +3,7 @@
 //! menu. Not the product UI.
 
 pub mod channel_list;
+mod folders;
 pub mod gfx;
 mod hits;
 mod home;
@@ -13,30 +14,35 @@ mod loader;
 pub mod logos;
 mod qr;
 pub mod quality_menu;
+mod search;
 pub mod signals_menu;
 mod setup;
 pub mod text;
 mod video;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use channel_list::ChannelList;
+use folders::OpenFolder;
 use hits::Hits;
 use info::InfoPanel;
 use gfx::{Color, IMAGE_SLOTS, Renderer};
 use language::Languages;
 pub use loader::REDRAW as LOADER_REDRAW;
 use logos::Logos;
+use mana_core::catalog::folder::Folders;
 use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::catalog::update::{self, Updater};
 use mana_core::language::{Language, Localized};
 use mana_core::session::{Failure, Program, Session, State, Stats};
 use quality_menu::QualityMenu;
+use search::Search;
 use signals_menu::SignalsMenu;
 use setup::Setup;
 use text::Text;
 
 use crate::palette;
+use crate::platform::DATA_DIR;
 use crate::platform::keys::Action;
 use crate::settings;
 
@@ -84,8 +90,13 @@ pub struct App {
     /// the rows shown, so that a row stays under the pointer.
     home_first: usize,
     message: Option<Message>,
-    /// The channels, on the home screen and over the video.
+    /// The channels, on the home screen and over the video: the list's,
+    /// or the events of the folder open.
     channels: ChannelList,
+    /// The sources' catalogues, read as their folders open.
+    folders: Folders,
+    /// The folder whose events are shown, if one is open.
+    folder: Option<OpenFolder>,
     /// Downloads the list, at start and when the phone sends a URL; none
     /// with the tests' lists.
     updater: Option<Updater>,
@@ -93,6 +104,11 @@ pub struct App {
     list_file: Option<PathBuf>,
     /// The home screen's «Settings» has the focus instead of a row.
     settings_focused: bool,
+    /// The home screen's «Search» has the focus instead of a row.
+    search_focused: bool,
+    /// The search, while open: over the home screen, found again after
+    /// what it played.
+    search: Option<Search>,
     /// The settings screen, while open.
     setup: Option<Setup>,
     /// Why there is no list to show, if the update failed without one.
@@ -132,9 +148,13 @@ impl App {
             home_first: 0,
             message: None,
             channels,
+            folders: Folders::new(Path::new(DATA_DIR)),
+            folder: None,
             updater,
             list_file,
             settings_focused: false,
+            search_focused: false,
+            search: None,
             setup: None,
             list_failure: None,
             channels_open: false,
@@ -173,9 +193,15 @@ impl App {
         &self.clips
     }
 
-    /// The clip focused on the home screen, if a clip is.
+    /// The clip focused on the home screen, if a clip is: the clips are
+    /// not in a folder.
     pub fn focused_clip(&self) -> Option<usize> {
-        self.focus.checked_sub(self.channels.len()).filter(|&i| i < self.clips.len())
+        self.focus.checked_sub(self.channels.len()).filter(|&i| i < self.clips_shown().len())
+    }
+
+    /// The clips the home screen shows: none in a folder.
+    fn clips_shown(&self) -> &[PathBuf] {
+        if self.folder.is_some() { &[] } else { &self.clips }
     }
 
     pub fn channels(&self) -> &ChannelList {
@@ -197,6 +223,7 @@ impl App {
 
     /// Plays the clip at `index`, after stopping what was playing.
     pub fn play_clip(&mut self, index: usize) {
+        self.close_folder();
         self.focus = self.channels.len() + index;
         self.play_focused();
     }
@@ -243,6 +270,10 @@ impl App {
                 self.handle_setup(action);
                 return Outcome::Continue;
             }
+            if self.search.is_some() {
+                self.handle_search(action);
+                return Outcome::Continue;
+            }
             return self.handle_home(action);
         }
         if self.channels_open {
@@ -257,9 +288,19 @@ impl App {
 
     /// Plays the focused channel; the reason it cannot be played, if so.
     fn play_focused_channel(&mut self) -> Result<(), ChannelError> {
-        let Some(channel) = self.channels.focused() else { return Ok(()) };
+        let Some(channel) = self.channels.focused().cloned() else { return Ok(()) };
+        self.play(channel)
+    }
+
+    /// Plays `channel`, or opens it when it is a folder; the reason it
+    /// cannot be played, if so.
+    fn play(&mut self, channel: Channel) -> Result<(), ChannelError> {
         let name = channel.title(self.languages.current()).to_string();
-        let program = match channel.play.clone()? {
+        let program = match channel.play? {
+            Play::Folder(folder) => {
+                self.open_folder(folder);
+                return Ok(());
+            }
             Play::Stream(playable) => Program::Live(playable),
             // Several signals: the viewer chooses one, what plays goes on.
             Play::Source(selection) if selection.source.sources.is_some() => {
@@ -320,11 +361,17 @@ impl App {
         self.hits.clear();
         if !self.session.is_playing() && self.setup.is_some() {
             self.draw_setup(r, t, s, surface, language);
+        } else if !self.session.is_playing()
+            && let Some(search) = &self.search
+        {
+            r.begin(surface.0, surface.1, BACKGROUND);
+            search.draw(r, t, s, &mut self.hits, language);
         } else if !self.session.is_playing() {
             self.draw_home(r, t, s, surface, language);
         } else if self.channels_open {
             r.begin(surface.0, surface.1, Color::TRANSPARENT);
             self.logos.upload(r);
+            self.channels.set_status(self.folder_status(language));
             self.channels.draw(r, t, &mut self.logos, s, &mut self.hits, language);
         } else {
             r.begin(surface.0, surface.1, Color::TRANSPARENT);

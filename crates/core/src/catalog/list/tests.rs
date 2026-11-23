@@ -61,7 +61,7 @@ fn channels(list: &List) -> Vec<&Channel> {
         .iter()
         .filter_map(|entry| match entry {
             Entry::Channel(channel) => Some(channel),
-            Entry::Include(_) | Entry::Catalogue(..) => None,
+            Entry::Include(_) | Entry::Folder(_) => None,
         })
         .collect()
 }
@@ -75,7 +75,7 @@ fn channels_and_inclusions_keep_the_file_s_order() {
         .map(|entry| match entry {
             Entry::Channel(channel) => channel.name.clone().unwrap_or_default(),
             Entry::Include(url) => url.to_string(),
-            Entry::Catalogue(name, _) => name.clone(),
+            Entry::Folder(folder) => folder.name.clone(),
         })
         .collect();
     assert_eq!(order, ["Rai 1", "https://iptv.invalid/it.m3u", "Sportitalia Live 24", "Pluto Cinema"]);
@@ -257,8 +257,8 @@ m3u = "https://lists.invalid/a.m3u"
 source = "events"
 "#;
     let list = parse(text, device).unwrap();
-    let Entry::Catalogue(name, selection) = &list.entries[0] else { panic!("{:?}", list.entries) };
-    assert_eq!((name.as_str(), selection.device.as_str()), ("events", "d-1"));
+    let Entry::Folder(folder) = &list.entries[0] else { panic!("{:?}", list.entries) };
+    assert_eq!((folder.name.as_str(), folder.device.as_str()), ("events", "d-1"));
     assert_eq!(list.entries.len(), 1);
     assert_eq!(
         list.skipped,

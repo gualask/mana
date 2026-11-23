@@ -55,10 +55,10 @@ header = { "User-Agent" = "…" }  # optional
 m3u = "https://lists.invalid/channels.m3u"
 
 [[include]]
-source = "example"                 # its catalogue's items, as channels
+source = "example"                 # a folder of its catalogue's items
 ```
 
-Channels and included M3U lists appear in file order. A channel has `name`
+Channels, included M3U lists and folders appear in file order. A channel has `name`
 and exactly one of `url` and `source`. A source is a
 [source file](configuration.md#source-files) written under
 `[sources.NAME]`: NAME is its id, and its name when it gives none. A
@@ -68,13 +68,18 @@ its other fields (`id` above) are the item's, read as `{input.item.id}`;
 read and kept in `/media/developer/mana/device`. The source gives the
 headers of its requests and streams, so such a channel has no `header`.
 
-An `[[include]]` with `source` puts there the items of that source's
-catalogue, each a channel of the source: events with a start time first,
+An `[[include]]` with `source` puts there a folder, a row with the
+source's name. OK opens it: its rows become the items of the source's
+catalogue, each a channel of the source, events with a start time first,
 by time, which the screens show in the TV's local time, then the others in
-the catalogue's order. The catalogue is read with the list, and again when
-the channel list or the home screen opens if it is more than 5 minutes
-old ([list_updates.rs](../apps/tv/src/screens/list_updates.rs)); its copy
-is kept, as an included M3U list's, for a start without network.
+the catalogue's order; Back on the home screen returns to the list. The
+catalogue is read only when its folder opens, never with the list: the
+copy saved shows at once, and the source is asked again when the copy
+comes from an earlier start or is more than 2 minutes old, also when the
+channel list over the video or the home screen opens with the folder in
+it. A source that does not answer leaves the copy, and says why
+([folder.rs](../crates/core/src/catalog/folder.rs)). A list that no longer
+includes a source removes the copy of its catalogue.
 
 The keys are in English: a list written with the Italian keys of the first
 versions (`canali` at the root) is refused, with an error that names
@@ -94,7 +99,10 @@ A channel whose source has no `sources` flow is its only candidate and
 plays at once. Otherwise OK asks the source for the item's candidates and
 shows them in a menu, by their `label` or else their `id`, while what was
 playing goes on; with a single candidate, it plays at once. The candidate
-chosen is resolved and played; Left opens the menu again while it plays,
+chosen is resolved and played; an event that has not started yet says
+when it starts, since its signals are often not on air before, and an
+event already started shows its time in green in the list. Left opens the
+menu again while it plays,
 with the one in use marked, to choose another
 ([signals_menu.rs](../apps/tv/src/screens/signals_menu.rs)).
 

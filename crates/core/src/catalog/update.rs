@@ -13,12 +13,11 @@
 mod copies;
 
 use std::path::Path;
-use std::time::{Duration, Instant};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use url::Url;
 
-use super::{Channel, Play, list};
+use super::{Channel, list};
 use crate::language::{Language, Localized, display_in_english};
 use crate::log::log;
 use crate::net;
@@ -140,9 +139,6 @@ pub struct Updater {
     pending: usize,
     /// The ticket of the next download asked.
     next: u64,
-    /// When the list shown came, if its channels come from a source with
-    /// a catalogue, which changes as events start and end.
-    catalogues_since: Option<Instant>,
 }
 
 impl Updater {
@@ -157,7 +153,7 @@ impl Updater {
         let saved = copies.saved(url.as_ref());
         let (failures, updates) = channel();
         let jobs = run_in_order(copies, failures.clone());
-        let mut updater = Self { jobs, updates, failures, url: None, pending: 0, next: 0, catalogues_since: None };
+        let mut updater = Self { jobs, updates, failures, url: None, pending: 0, next: 0 };
         if let Some(url) = url {
             updater.url = Some(url.clone());
             updater.ask(url, false);
@@ -198,9 +194,8 @@ impl Updater {
     pub fn poll(&mut self) -> Option<Update> {
         let update = self.updates.try_recv().ok()?;
         self.pending -= 1;
-        if let Outcome::Channels { channels, .. } = &update.outcome {
+        if let Outcome::Channels { .. } = &update.outcome {
             self.url = Some(update.url.clone());
-            self.catalogues_since = channels.iter().any(from_catalogue).then(Instant::now);
         }
         Some(update)
     }
@@ -215,24 +210,6 @@ impl Updater {
     pub fn downloading(&self) -> bool {
         self.pending > 0
     }
-
-    /// Downloads the list in use again when its channels come from a
-    /// source's catalogue and it came more than `age` ago, unless a
-    /// download is under way: the events on screen stay those of now.
-    pub fn refresh_catalogues(&mut self, age: Duration) -> Option<Ticket> {
-        let old = self.catalogues_since.is_some_and(|since| since.elapsed() > age);
-        if !old || self.downloading() {
-            return None;
-        }
-        // A download that fails is tried again `age` later.
-        self.catalogues_since = Some(Instant::now());
-        self.refresh()
-    }
-}
-
-/// Whether `channel` plays through a source with a catalogue.
-fn from_catalogue(channel: &Channel) -> bool {
-    matches!(&channel.play, Ok(Play::Source(selection)) if selection.source.catalogue.is_some())
 }
 
 /// Starts the thread that runs the downloads sent to it one after another,
@@ -251,4 +228,4 @@ fn run_in_order(copies: Copies, updates: Sender<Update>) -> Option<Sender<Job>> 
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

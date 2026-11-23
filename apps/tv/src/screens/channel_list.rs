@@ -2,7 +2,9 @@
 //! home screen, moved with the remote while playback goes on; thousands of
 //! made-up ones for the interface test.
 
-use mana_core::catalog::{Channel, ChannelError};
+use std::borrow::Cow;
+
+use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::language::{Language, Localized};
 use mana_core::text;
 
@@ -10,7 +12,7 @@ use super::gfx::{Color, Renderer};
 use super::hits::{Hits, Target};
 use super::logos::Logos;
 use super::text::Text;
-use super::{BACKGROUND as PANEL, ERROR, FOCUS, MUTED, TEXT};
+use super::{BACKGROUND as PANEL, ERROR, FOCUS, MUTED, OK, TEXT};
 use crate::platform::clock;
 
 const VISIBLE_ROWS: usize = 12;
@@ -33,6 +35,10 @@ pub struct ChannelList {
     first: usize,
     /// Why the focused channel did not play, until the focus moves.
     notice: Option<ChannelError>,
+    /// The name of the folder these are the events of, if they are.
+    folder: Option<String>,
+    /// What the screens say about the folder, under the rows.
+    status: Option<String>,
 }
 
 impl ChannelList {
@@ -51,20 +57,40 @@ impl ChannelList {
     }
 
     pub fn new(channels: Vec<Channel>) -> Self {
-        Self { channels, focus: 0, first: 0, notice: None }
+        Self { channels, focus: 0, first: 0, notice: None, folder: None, status: None }
+    }
+
+    /// The events of the folder `name`.
+    pub fn folder(name: &str, channels: Vec<Channel>) -> Self {
+        Self { folder: Some(name.to_string()), ..Self::new(channels) }
+    }
+
+    /// Says `status` under the rows, while no notice is shown.
+    pub fn set_status(&mut self, status: Option<String>) {
+        self.status = status;
     }
 
     /// Shows `channels` instead, the focus kept on the channel of the same
-    /// name if it is still there, else on the first.
-    pub fn replace(&mut self, channels: Vec<Channel>) {
-        let focused = self.focused().and_then(|c| c.name.clone());
+    /// name if it is still there, else on the first. Returns where the
+    /// channel at `row` is now, by the same rule, for a focus kept
+    /// elsewhere (the home screen's); None when `row` was not a channel.
+    pub fn replace(&mut self, channels: Vec<Channel>, row: usize) -> Option<usize> {
+        let name = |list: &Self, i: usize| list.channels.get(i).map(|c| c.name.clone());
+        let (focused, followed) = (name(self, self.focus), name(self, row));
         self.channels = channels;
         self.notice = None;
-        self.set_focus(focused.and_then(|name| self.position(&name)).unwrap_or(0));
+        let now = |name: Option<String>| name.and_then(|name| self.position(&name)).unwrap_or(0);
+        let (followed, focus) = (followed.map(now), now(focused.flatten()));
+        self.set_focus(focus);
+        followed
     }
 
     pub fn channels(&self) -> &[Channel] {
         &self.channels
+    }
+
+    pub fn into_channels(self) -> Vec<Channel> {
+        self.channels
     }
 
     /// Shows why the focused channel does not play, until the focus moves.
@@ -120,14 +146,14 @@ impl ChannelList {
     /// scales the 1080p layout to the surface. Asks for the logos of the
     /// visible rows, then of the rows around them; records the rows in `hits`.
     /// A channel that cannot be played is dimmed; the reason it did not,
-    /// once asked, shows under the rows.
+    /// once asked, shows under the rows, else the folder's status. The
+    /// header names the folder, if these are its events.
     pub fn draw(&self, r: &mut Renderer, t: &mut Text, logos: &mut Logos, s: f32, hits: &mut Hits, language: Language) {
         let (x, y, w, row) = (60.0 * s, 120.0 * s, 720.0 * s, 64.0 * s);
-        let notice_height = if self.notice.is_some() { 56.0 } else { 0.0 };
-        r.rect(x, y, w, (VISIBLE_ROWS as f32 * 64.0 + 120.0 + notice_height) * s, PANEL.with_alpha(0.85));
-        let (focus, count) = (self.focus + 1, self.channels.len());
-        let header = text!(language, "channels-header", focus = focus, count = count);
-        t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &header);
+        let below = self.below(language);
+        let below_height = if below.is_some() { 56.0 } else { 0.0 };
+        r.rect(x, y, w, (VISIBLE_ROWS as f32 * 64.0 + 120.0 + below_height) * s, PANEL.with_alpha(0.85));
+        t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &self.header(language));
         let (first, now) = (self.first, clock::now());
         let with_logos = self.channels.iter().any(|c| c.logo.is_some());
         let text_x = if with_logos { x + 136.0 * s } else { x + 36.0 * s };
@@ -144,18 +170,35 @@ impl ChannelList {
             }
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
             let title_x = match starts(channel, now) {
-                Some(time) => text_x + t.draw(r, text_x, top + 12.0 * s, 32.0 * s, MUTED, &time) + 20.0 * s,
+                Some(time) => text_x + t.draw(r, text_x, top + 12.0 * s, 32.0 * s, time_colour(channel, now), &time) + 20.0 * s,
                 None => text_x,
             };
-            t.draw(r, title_x, top + 12.0 * s, 32.0 * s, colour, &channel.title(language));
+            t.draw(r, title_x, top + 12.0 * s, 32.0 * s, colour, &label(channel, language));
         }
-        if let Some(notice) = &self.notice {
+        if let Some((text, colour)) = below {
             let top = y + 90.0 * s + VISIBLE_ROWS as f32 * row + 10.0 * s;
-            t.draw(r, x + 30.0 * s, top, 26.0 * s, ERROR, &notice.text(language));
+            t.draw(r, x + 30.0 * s, top, 26.0 * s, colour, &text);
         }
         if with_logos {
             self.want_logos(logos);
         }
+    }
+
+    /// The header: the folder's name, if these are its events, and where
+    /// the focus is.
+    fn header(&self, language: Language) -> String {
+        let (focus, count) = (self.focus + 1, self.channels.len());
+        match &self.folder {
+            Some(folder) => text!(language, "channels-folder-header", folder = folder, focus = focus, count = count),
+            None => text!(language, "channels-header", focus = focus, count = count),
+        }
+    }
+
+    /// What shows under the rows, with its colour: why the focused channel
+    /// did not play, else the folder's status.
+    fn below(&self, language: Language) -> Option<(String, Color)> {
+        let notice = self.notice.as_ref().map(|notice| (notice.text(language), ERROR));
+        notice.or_else(|| self.status.clone().map(|status| (status, MUTED)))
     }
 
     /// Asks for the logos of the visible rows, then of the rows around them.
@@ -176,12 +219,52 @@ pub fn draw_logo(r: &mut Renderer, logos: &mut Logos, url: &str, x: f32, y: f32,
     }
 }
 
+/// The name a row shows: the channel's title, with a mark when it is a
+/// folder.
+pub(super) fn label(channel: &Channel, language: Language) -> Cow<'_, str> {
+    match &channel.play {
+        Ok(Play::Folder(_)) => Cow::Owned(format!("{}  ›", channel.title(language))),
+        _ => channel.title(language),
+    }
+}
+
 /// When an event starts, in the TV's local time: `20:30` today, else with
 /// the day, `24/11 20:30`; None for a channel.
 pub(super) fn starts(channel: &Channel, now: i64) -> Option<String> {
-    let at = clock::local(channel.starts_at?);
+    Some(time(channel.starts_at?, now))
+}
+
+/// The instant `at`, in seconds since 1970, in the TV's local time: `20:30`
+/// on the day of `now`, else with the day, `24/11 20:30`.
+pub(super) fn time(at: i64, now: i64) -> String {
+    let at = clock::local(at);
     let (day, today) = (at.div_euclid(86_400), clock::local(now).div_euclid(86_400));
     let date = mana_core::source::date::rfc3339(at);
     let time = &date[11..16];
-    Some(if day == today { time.to_string() } else { format!("{}/{} {time}", &date[8..10], &date[5..7]) })
+    if day == today { time.to_string() } else { format!("{}/{} {time}", &date[8..10], &date[5..7]) }
+}
+
+/// The colour of an event's time: that of a live stream once it started.
+pub(super) fn time_colour(channel: &Channel, now: i64) -> Color {
+    if channel.starts_at.is_some_and(|at| at <= now) { OK } else { MUTED }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(names: &[&str]) -> Vec<Channel> {
+        let channel = |name: &&str| Channel { name: Some(name.to_string()), logo: None, group: None, starts_at: None, play: Err(ChannelError::NoStream) };
+        names.iter().map(channel).collect()
+    }
+
+    #[test]
+    fn a_replacement_keeps_the_focus_and_a_row_followed_on_the_same_names() {
+        let mut list = ChannelList::new(named(&["A", "B", "C"]));
+        list.set_focus(2);
+        assert_eq!(list.replace(named(&["C", "X", "B"]), 1), Some(2), "B, followed");
+        assert_eq!(list.focused().and_then(|c| c.name.as_deref()), Some("C"));
+        assert_eq!(list.replace(named(&["Y"]), 0), Some(0), "gone: the first");
+        assert_eq!(list.replace(named(&["Y"]), 5), None, "not a channel");
+    }
 }

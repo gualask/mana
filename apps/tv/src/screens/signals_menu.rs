@@ -11,10 +11,12 @@ use mana_core::source::Selection;
 use mana_core::source::run::{self, Candidate};
 use mana_core::text;
 
+use super::channel_list;
 use super::gfx::Renderer;
 use super::hits::{Hits, Target};
 use super::text::Text;
 use super::{BACKGROUND as PANEL, FOCUS, MUTED, TEXT};
+use crate::platform::clock;
 
 /// Rows shown at once; the list scrolls past them.
 const ROWS: usize = 12;
@@ -118,6 +120,11 @@ impl SignalsMenu {
         let shown = candidates.len().clamp(1, ROWS);
         r.rect(x, y, w, (shown as f32 * 64.0 + 200.0) * s, PANEL.with_alpha(0.85));
         t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &format!("{} · {}", text!(language, "signals-title"), self.name));
+        let now = clock::now();
+        if let Some(at) = self.selection.item.starts_at().filter(|&at| at > now) {
+            let note = text!(language, "signals-not-started", time = channel_list::time(at, now));
+            t.draw(r, x + 30.0 * s, y + 62.0 * s, 22.0 * s, MUTED, &note);
+        }
         let note = match &self.signals {
             Signals::Asking(_) => Some(text!(language, "signals-asking")),
             Signals::None(failure) => Some(failure.text(language)),

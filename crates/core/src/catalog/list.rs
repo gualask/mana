@@ -1,7 +1,7 @@
 //! Mana's channel list, in TOML: sources defined once (`[sources.NAME]`,
 //! docs/configuration.md), channels with a URL or a source and the fields
-//! its flows read (`[[channels]]`), and
-//! whole M3U lists included where they appear (`[[include]]`). A list
+//! its flows read (`[[channels]]`), and, where they appear, whole M3U
+//! lists and the folders of sources' catalogues (`[[include]]`). A list
 //! that is not TOML is refused as a whole, and so is one with the Italian
 //! keys of the first versions; a broken channel stays in it, unavailable
 //! with the reason, and fields this version does not know are ignored, so
@@ -14,7 +14,7 @@ use toml::Spanned;
 use toml::de::{DeTable, DeValue};
 use url::Url;
 
-use super::{Channel, Play};
+use super::{Channel, Folder, Play};
 use crate::language::{Language, Localized, display_in_english};
 use crate::live::playable::Playable;
 use crate::source::{self, Item, Selection, Source};
@@ -119,9 +119,8 @@ pub enum Entry {
     Channel(Channel),
     /// The URL of an M3U list whose channels go here.
     Include(Url),
-    /// A source whose catalogue's items go here, as channels: its name in
-    /// the list, and the source with the device.
-    Catalogue(String, Selection),
+    /// A source whose catalogue's items are a folder here.
+    Folder(Folder),
 }
 
 /// The sources of the list by name, checked, or why they cannot be used.
@@ -180,21 +179,15 @@ fn tables<'a, 'i>(root: &'a DeTable<'i>, key: &str, skipped: &mut Vec<String>) -
         .collect()
 }
 
-/// What an `[[include]]` puts in its place: an M3U list, or the catalogue
-/// of a source of the list; why it puts nothing, for the log.
+/// What an `[[include]]` puts in its place: an M3U list, or the folder of
+/// a source's catalogue; why it puts nothing, for the log.
 fn included(table: &DeTable, sources: &Sources, device: &impl Fn() -> Option<String>) -> Result<Entry, String> {
     let (m3u, source) = (string(table, key::M3U).map_err(|e| e.to_string())?, string(table, key::SOURCE).map_err(|e| e.to_string())?);
     match (m3u, source) {
         (Some(m3u), None) => Url::parse(&m3u).map(Entry::Include).map_err(|e| format!("{m3u}: {e}")),
         (None, Some(name)) => match sources.get(&name) {
             Some(Ok(source)) if source.catalogue.is_some() => {
-                let selection = Selection {
-                    source: source.clone(),
-                    item: Item { fields: BTreeMap::new() },
-                    device: device().unwrap_or_default(),
-                    candidate: None,
-                };
-                Ok(Entry::Catalogue(name, selection))
+                Ok(Entry::Folder(Folder { name, source: source.clone(), device: device().unwrap_or_default() }))
             }
             Some(Ok(_)) => Err(format!("source {name} has no catalogue")),
             Some(Err(error)) => Err(format!("source {name}: {error}")),

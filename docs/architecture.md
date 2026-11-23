@@ -174,7 +174,7 @@ crates/core/                # mana-core: no UI and no platform dependency
     live/                   # playable.rs (a stream to play), hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
     source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs), checks (validate.rs), engine (run/: flows and limits, values and templates, operations)
-    catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
+    catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), folders of the sources' catalogues (folder.rs), search by name (search.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
     net.rs, log.rs, adts.rs
 apps/
@@ -182,7 +182,7 @@ apps/
     build.rs                # cfg(webos), crash.c, linker arguments of the binary
     src/
       main.rs               # composition and event loop
-      screens/              # home screen (home.rs), Settings (setup.rs), language in use (language.rs), arrival of the list (list_updates.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos, pointer zones
+      screens/              # home screen (home.rs), Settings (setup.rs), language in use (language.rs), arrival of the list (list_updates.rs), folders open (folders.rs), search (search.rs), signals (signals_menu.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos, pointer zones
       phone/                # page served to the phone while Settings is open: server, minimal HTTP, HTML
       palette.rs            # colours of the screens and of the page
       platform/             # SDL, keys, Magic Remote pointer, TV locale (locale.rs), CPU AES instructions, Starfish backend, data folder

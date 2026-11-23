@@ -133,20 +133,43 @@ signals-title = Signals
 signals-asking = Looking for the signals…
 signals-in-use = in use
 signals-failed = does not play
+signals-not-started = Starts { $time } · the signals may not be on air yet
 
 ## Home screen
 
 home-subtitle = Feasibility test · the list's channels, then test clips and live streams
 home-position = { $focus } of { $count }
 home-empty = No channels, and no clips in { $clips } or { $data }
-home-footer = OK to play, then OK for the channels, up or down for the panel, right for the quality · right here for Settings · Back to exit
+home-footer = OK to play, then OK for the channels, up or down for the panel, right for the quality · right here for Search and Settings · Back to exit
 home-list-downloading = Channel list on its way…
 home-list-unavailable = Channel list unavailable: { $reason }
 home-list-not-set = No list: set it in Settings →
+home-folder-footer = OK to play · Back to the list
+
+## Folders
+
+folder-loading = Looking for the events…
+folder-unavailable = Events unavailable: { $reason }
+folder-saved = Events of the saved copy: { $reason }
+folder-empty = No events now
+
+## Search
+
+search = Search
+search-title = Search
+search-space = space
+search-delete = delete
+search-hint = Type to search the list's channels and the events of the folders already opened
+search-found = { $count ->
+    [one] 1 found
+   *[other] { $count } found
+}
+search-footer = OK to type · right from the keyboard to the results, left back · OK on a result to play it · Back to close
 
 ## While watching
 
 channels-header = Channels · { $focus } of { $count }
+channels-folder-header = { $folder } · { $focus } of { $count }
 state-starting = Starting
 state-playing = Playing
 state-ending = Ending

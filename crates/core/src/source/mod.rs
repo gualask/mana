@@ -54,6 +54,15 @@ pub struct Item {
     pub fields: BTreeMap<String, String>,
 }
 
+impl Item {
+    /// When the event starts, in seconds since 1970: its `starts_at`, an
+    /// instant as the `date` operation gives it; None for a channel, or a
+    /// field that is not one.
+    pub fn starts_at(&self) -> Option<i64> {
+        self.fields.get("starts_at").and_then(|at| date::instant(at))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resolve {
     Steps(Flow),

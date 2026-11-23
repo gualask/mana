@@ -129,6 +129,7 @@ demux-rewind = impossibile tornare all'inizio del file: { $detail }
 
 signals-title = Segnali
 signals-asking = Cerco i segnali…
+signals-not-started = Inizio { $time } · i segnali potrebbero non essere ancora in onda
 signals-in-use = in uso
 signals-failed = non va
 
@@ -137,14 +138,36 @@ signals-failed = non va
 home-subtitle = Prova di fattibilità · canali della lista, poi clip e dirette di prova
 home-position = { $focus } di { $count }
 home-empty = Nessun canale, né clip in { $clips } o { $data }
-home-footer = OK per riprodurre, poi OK per i canali, su o giù per il pannello, destra per la qualità · destra qui per Impostazioni · Indietro per uscire
+home-footer = OK per riprodurre, poi OK per i canali, su o giù per il pannello, destra per la qualità · destra qui per Cerca e Impostazioni · Indietro per uscire
 home-list-downloading = Lista dei canali in arrivo…
 home-list-unavailable = Lista dei canali non disponibile: { $reason }
 home-list-not-set = Nessuna lista: impostala da Impostazioni →
+home-folder-footer = OK per riprodurre · Indietro per la lista
+
+## Folders
+
+folder-loading = Ricerca degli eventi…
+folder-unavailable = Eventi non disponibili: { $reason }
+folder-saved = Eventi della copia salvata: { $reason }
+folder-empty = Nessun evento ora
+
+## Search
+
+search = Cerca
+search-title = Cerca
+search-space = spazio
+search-delete = cancella
+search-hint = Scrivi per cercare tra i canali della lista e gli eventi delle cartelle già aperte
+search-found = { $count ->
+    [one] 1 trovato
+   *[other] { $count } trovati
+}
+search-footer = OK per scrivere · destra dalla tastiera ai risultati, sinistra per tornare · OK su un risultato per riprodurlo · Indietro per chiudere
 
 ## While watching
 
 channels-header = Canali · { $focus } di { $count }
+channels-folder-header = { $folder } · { $focus } di { $count }
 state-starting = Avvio
 state-playing = In riproduzione
 state-ending = Fine

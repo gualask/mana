@@ -1,6 +1,7 @@
 //! Over the video: the keys of the channel list, the quality menu and the
 //! video itself, and the drawing of the panel and the menu.
 
+use mana_core::catalog::Play;
 use mana_core::language::Language;
 use mana_core::log::log;
 
@@ -17,10 +18,14 @@ impl App {
             Action::Down => self.channels.step(1),
             Action::Left => self.channels.step(-channel_list::PAGE),
             Action::Right => self.channels.step(channel_list::PAGE),
-            Action::Select => match self.play_focused_channel() {
-                Ok(()) => self.channels_open = false,
-                Err(reason) => self.channels.notice(reason),
-            },
+            Action::Select => {
+                // A folder opens in the list, which stays open.
+                let folder = matches!(self.channels.focused().map(|c| &c.play), Some(Ok(Play::Folder(_))));
+                match self.play_focused_channel() {
+                    Ok(()) => self.channels_open = folder,
+                    Err(reason) => self.channels.notice(reason),
+                }
+            }
             Action::Back => self.channels_open = false,
         }
     }
@@ -60,11 +65,11 @@ impl App {
             Action::Back => {
                 self.session.stop();
                 log!("playback stopped");
-                self.refresh_catalogues();
+                self.refresh_folder();
             }
             Action::Select => {
                 self.channels_open = true;
-                self.refresh_catalogues();
+                self.refresh_folder();
             }
             Action::Up | Action::Down => self.info.toggle(),
             Action::Right => self.open_quality_menu(),

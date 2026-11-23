@@ -49,11 +49,14 @@ built, as described in [TV app](docs/tv-app.md#building).
 
 ## Usage
 
-1. Open Mana and, on the home screen, use the right arrow to go to
-   "Settings" ("Impostazioni" in Italian).
+1. Open Mana and, on the home screen, press the right arrow twice to go to
+   "Settings" ("Impostazioni" in Italian): the first stops on "Search".
 2. Scan the QR code with your phone and enter the address of your channel
    list: [Channel list](docs/channel-list.md) explains how to write it.
-3. Choose a channel and press OK.
+3. Choose a channel and press OK. A row marked `›` is a folder with the
+   events of a source: OK opens it, Back returns to the list. "Search"
+   ("Cerca"), next to "Settings", finds channels and events by name with
+   an on-screen keyboard, among the folders already opened.
 
 While watching:
 
@@ -69,7 +72,7 @@ While watching:
 
 Mana is a personal project, still in development: it is tested on a single
 TV, an LG OLED B1, and not yet on other models. Development continues with
-the sources' catalogues and events in the interface, and a desktop app.
+a desktop app.
 
 ## Technical documentation
 

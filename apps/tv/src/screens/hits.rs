@@ -12,6 +12,8 @@ use crate::platform::keys::Action;
 pub enum Target {
     /// A row of the home screen: a channel, then the clips.
     Home(usize),
+    /// The home screen's «Search».
+    Search,
     /// The home screen's «Settings».
     Settings,
     /// The settings screen's «Update list».
@@ -21,6 +23,10 @@ pub enum Target {
     Channel(usize),
     Quality(usize),
     Signal(usize),
+    /// A key of the search's keyboard.
+    Key(usize),
+    /// A result of the search.
+    Found(usize),
 }
 
 /// The rows of the last frame drawn, in drawable pixels.
@@ -69,9 +75,10 @@ impl App {
         match target {
             Target::Home(i) => {
                 self.focus = i;
-                self.settings_focused = false;
+                (self.settings_focused, self.search_focused) = (false, false);
             }
-            Target::Settings => self.settings_focused = true,
+            Target::Search => (self.settings_focused, self.search_focused) = (false, true),
+            Target::Settings => (self.settings_focused, self.search_focused) = (true, false),
             Target::Refresh => self.point_setup(Row::Refresh),
             Target::Language => self.point_setup(Row::Language),
             Target::Channel(i) => self.channels.point(i),
@@ -83,6 +90,16 @@ impl App {
             Target::Signal(i) => {
                 if let Some(menu) = &mut self.signals {
                     menu.set_focus(i);
+                }
+            }
+            Target::Key(i) => {
+                if let Some(search) = &mut self.search {
+                    search.point_key(i);
+                }
+            }
+            Target::Found(i) => {
+                if let Some(search) = &mut self.search {
+                    search.point_result(i);
                 }
             }
         }

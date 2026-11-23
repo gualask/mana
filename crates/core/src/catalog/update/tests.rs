@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::catalog::Play;
 
 /// What the test server answers for each path: status and body.
-type Answers = Arc<Mutex<HashMap<String, (u16, String)>>>;
+pub(in crate::catalog) type Answers = Arc<Mutex<HashMap<String, (u16, String)>>>;
 
 /// Serves the answers on a local port, 404 for other paths.
-fn serve() -> (String, Answers) {
+pub(in crate::catalog) fn serve() -> (String, Answers) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let answers = Answers::default();
@@ -37,12 +38,12 @@ fn serve() -> (String, Answers) {
     (address, answers)
 }
 
-fn answer(answers: &Answers, path: &str, status: u16, body: &str) {
+pub(in crate::catalog) fn answer(answers: &Answers, path: &str, status: u16, body: &str) {
     answers.lock().unwrap().insert(path.into(), (status, body.into()));
 }
 
 /// A data directory of its own for each test.
-fn data_dir(name: &str) -> PathBuf {
+pub(in crate::catalog) fn data_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("mana-update-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir
@@ -320,10 +321,11 @@ fn a_url_chosen_that_cannot_be_saved_is_not_kept() {
 
 /// A list of `channels` with the catalogue of an event source served at
 /// `address`: the events with signals, by their time in UTC+8.
-fn with_catalogue(address: &str, channels: &[&str]) -> String {
+pub(in crate::catalog) fn with_catalogue(address: &str, channels: &[&str]) -> String {
     let channels: String = channels.iter().map(|n| format!("[[channels]]\nname = \"{n}\"\nurl = \"https://a.invalid/{n}.m3u8\"\n")).collect();
     format!(
         r#"[sources.events]
+name = "Events"
 [[sources.events.catalogue.steps]]
 id = "page"
 op = "http"
@@ -345,48 +347,21 @@ source = "events"
     )
 }
 
-const EVENTS: &str = r#"[
-  {"id": "late", "title": "Late", "time": "2026-11-23 22:00:00", "signals": [1]},
-  {"id": "none", "title": "No signals", "time": "2026-11-23 18:00:00", "signals": []},
-  {"id": "early", "title": "Early", "time": "2026-11-23 20:30:00", "signals": [1, 2]}
-]"#;
-
 #[test]
-fn a_source_s_catalogue_puts_its_events_with_signals_by_time() {
+fn a_source_s_catalogue_is_a_folder_the_list_does_not_read() {
     let (address, answers) = serve();
     let dir = data_dir("catalogue");
     answer(&answers, "/list.toml", 200, &with_catalogue(&address, &["Rai 1"]));
-    answer(&answers, "/events.json", 200, EVENTS);
     let (_, mut updater) = Updater::start(&dir, Some(Url::parse(&format!("{address}/list.toml")).unwrap()));
     let channels = updated(outcome(&mut updater));
-    assert_eq!(names(&channels), ["Rai 1", "Early", "Late"]);
-    assert_eq!(channels[1].starts_at, crate::source::date::instant("2026-11-23T12:30:00Z"));
-    let Ok(Play::Source(selection)) = &channels[1].play else { panic!("{:?}", channels[1].play) };
-    assert_eq!(selection.item.fields["id"], "early");
-    // The source does not answer: the saved copy of its catalogue.
-    answer(&answers, "/events.json", 503, "");
-    updater.refresh();
-    assert_eq!(names(&updated(outcome(&mut updater))), ["Rai 1", "Early", "Late"]);
-    // Nor any more: the catalogue is left out.
-    std::fs::remove_file(dir.join("list").join("events.catalogue.json")).unwrap();
-    updater.refresh();
-    assert_eq!(names(&updated(outcome(&mut updater))), ["Rai 1"]);
-}
-
-#[test]
-fn catalogues_are_read_again_only_once_they_are_old() {
-    let (address, answers) = serve();
-    let dir = data_dir("catalogue-age");
-    answer(&answers, "/list.toml", 200, &with_catalogue(&address, &[]));
-    answer(&answers, "/events.json", 200, EVENTS);
-    let (_, mut updater) = Updater::start(&dir, Some(Url::parse(&format!("{address}/list.toml")).unwrap()));
-    updated(outcome(&mut updater));
-    assert!(updater.refresh_catalogues(Duration::from_secs(60)).is_none());
-    assert!(updater.refresh_catalogues(Duration::ZERO).is_some());
-    assert!(updater.refresh_catalogues(Duration::ZERO).is_none(), "one under way");
-    updated(outcome(&mut updater));
+    assert_eq!(names(&channels), ["Rai 1", "Events"]);
+    let Ok(Play::Folder(folder)) = &channels[1].play else { panic!("{:?}", channels[1].play) };
+    assert_eq!(folder.name, "events");
+    assert!(!dir.join("list").join("events.catalogue.json").exists(), "the catalogue was read");
+    // A folder no longer in the list loses its copy.
+    std::fs::write(dir.join("list").join("events.catalogue.json"), "[]").unwrap();
     answer(&answers, "/list.toml", 200, &one("Plain"));
     updater.refresh();
     updated(outcome(&mut updater));
-    assert!(updater.refresh_catalogues(Duration::ZERO).is_none(), "no catalogue in the list");
+    assert!(!dir.join("list").join("events.catalogue.json").exists());
 }

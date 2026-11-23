@@ -51,21 +51,27 @@ fn playable(dir: &Path) -> Vec<PathBuf> {
 }
 
 impl App {
-    /// The rows: the channels, then the clips.
+    /// The rows: the channels, then the clips; a folder's events alone.
     fn rows(&self) -> usize {
-        self.channels.len() + self.clips.len()
+        self.channels.len() + self.clips_shown().len()
     }
 
     pub(super) fn handle_home(&mut self, action: Action) -> Outcome {
         match action {
-            // The rows stay where they are while «Settings» has the focus.
-            Action::Up | Action::Down if self.settings_focused => {}
+            // The rows stay where they are while a button has the focus:
+            // right goes from the rows to «Search», then to «Settings».
+            Action::Up | Action::Down if self.settings_focused || self.search_focused => {}
             Action::Up => self.focus = self.focus.saturating_sub(1),
             Action::Down => self.focus = (self.focus + 1).min(self.rows().saturating_sub(1)),
-            Action::Right => self.settings_focused = true,
-            Action::Left => self.settings_focused = false,
+            Action::Right if self.settings_focused => {}
+            Action::Right if self.search_focused => (self.search_focused, self.settings_focused) = (false, true),
+            Action::Right => self.search_focused = true,
+            Action::Left if self.settings_focused => (self.search_focused, self.settings_focused) = (true, false),
+            Action::Left => self.search_focused = false,
             Action::Select if self.settings_focused => self.open_setup(),
+            Action::Select if self.search_focused => self.open_search(),
             Action::Select => self.play_focused(),
+            Action::Back if self.folder.is_some() => self.close_folder(),
             Action::Back => return Outcome::Exit,
         }
         Outcome::Continue
@@ -79,15 +85,19 @@ impl App {
             self.play_channel(self.focus);
             return;
         }
-        let Some(path) = self.clips.get(self.focus - channels).cloned() else {
+        let Some(path) = self.clips_shown().get(self.focus - channels).cloned() else {
             self.clips = clips();
             return;
         };
         self.start(clip_name(&path), Program::Path(path));
     }
 
-    /// What the home screen says about the list, while it has no channels.
+    /// What the home screen says about the list, while it has no channels,
+    /// or about the folder open.
     fn list_status(&self, language: Language) -> Option<String> {
+        if self.folder.is_some() {
+            return self.folder_status(language);
+        }
         match self.list_state() {
             ListState::Downloading => Some(text!(language, "home-list-downloading")),
             ListState::Unavailable(reason) => Some(text!(language, "home-list-unavailable", reason = reason.text(language))),
@@ -110,9 +120,9 @@ impl App {
         r.begin(surface.0, surface.1, BACKGROUND);
         self.logos.upload(r);
         t.draw(r, 120.0 * s, 90.0 * s, 72.0 * s, TEXT, "Mana");
-        let subtitle = text!(language, "home-subtitle");
+        let subtitle = self.folder_title().map_or_else(|| text!(language, "home-subtitle"), str::to_string);
         t.draw(r, 120.0 * s, 180.0 * s, 32.0 * s, MUTED, &subtitle);
-        self.draw_settings_button(r, t, s, language);
+        self.draw_buttons(r, t, s, language);
 
         if let Some(status) = self.list_status(language) {
             t.draw(r, 120.0 * s, 226.0 * s, 24.0 * s, MUTED, &status);
@@ -129,16 +139,22 @@ impl App {
         if let Some(message) = &self.message {
             t.draw(r, 120.0 * s, 900.0 * s, 28.0 * s, ERROR, &message.text(language));
         }
-        let footer = text!(language, "home-footer");
+        let footer = if self.folder.is_some() { text!(language, "home-folder-footer") } else { text!(language, "home-footer") };
         t.draw(r, 120.0 * s, 980.0 * s, 24.0 * s, MUTED, &footer);
     }
 
-    /// «Settings», at the top right.
-    fn draw_settings_button(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
-        let (x, y, w, h) = (1460.0 * s, 96.0 * s, 340.0 * s, 72.0 * s);
-        r.rect(x, y, w, h, if self.settings_focused { FOCUS } else { ROW });
-        self.hits.add(x, y, w, h, Target::Settings);
-        t.draw(r, x + 36.0 * s, y + 16.0 * s, 32.0 * s, TEXT, &text!(language, "settings"));
+    /// «Search» and «Settings», at the top right.
+    fn draw_buttons(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
+        let buttons = [
+            (1100.0, self.search_focused, Target::Search, text!(language, "search")),
+            (1460.0, self.settings_focused, Target::Settings, text!(language, "settings")),
+        ];
+        for (left, focused, target, label) in buttons {
+            let (x, y, w, h) = (left * s, 96.0 * s, 340.0 * s, 72.0 * s);
+            r.rect(x, y, w, h, if focused { FOCUS } else { ROW });
+            self.hits.add(x, y, w, h, target);
+            t.draw(r, x + 36.0 * s, y + 16.0 * s, 32.0 * s, TEXT, &label);
+        }
     }
 
     /// The rows shown: a channel with its logo, dimmed when it cannot be
@@ -151,7 +167,7 @@ impl App {
         for i in shown.clone() {
             let y = (260.0 + (i - first) as f32 * 96.0) * s;
             let (x, w, h) = (120.0 * s, 900.0 * s, 84.0 * s);
-            r.rect(x, y, w, h, if i == self.focus && !self.settings_focused { FOCUS } else { ROW });
+            r.rect(x, y, w, h, if i == self.focus && !self.settings_focused && !self.search_focused { FOCUS } else { ROW });
             self.hits.add(x, y, w, h, Target::Home(i));
             let Some(channel) = channels.get(i) else {
                 t.draw(r, 156.0 * s, y + 20.0 * s, 36.0 * s, TEXT, &clip_name(&self.clips[i - channels.len()]));
@@ -163,10 +179,10 @@ impl App {
             let text_x = if with_logos { 260.0 * s } else { 156.0 * s };
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
             let title_x = match channel_list::starts(channel, now) {
-                Some(time) => text_x + t.draw(r, text_x, y + 20.0 * s, 36.0 * s, MUTED, &time) + 20.0 * s,
+                Some(time) => text_x + t.draw(r, text_x, y + 20.0 * s, 36.0 * s, channel_list::time_colour(channel, now), &time) + 20.0 * s,
                 None => text_x,
             };
-            t.draw(r, title_x, y + 20.0 * s, 36.0 * s, colour, &channel.title(language));
+            t.draw(r, title_x, y + 20.0 * s, 36.0 * s, colour, &channel_list::label(channel, language));
         }
         let logos = shown.filter_map(|i| channels.get(i)?.logo.as_deref());
         self.logos.want(logos);

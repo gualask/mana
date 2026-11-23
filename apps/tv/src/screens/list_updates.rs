@@ -2,7 +2,6 @@
 //! downloads of the list) and how a download replaces those shown.
 
 use std::path::Path;
-use std::time::Duration;
 
 use mana_core::catalog::update::{self, Updater};
 use mana_core::catalog::{Channel, m3u};
@@ -12,10 +11,6 @@ use url::Url;
 use super::App;
 use super::channel_list::ChannelList;
 use crate::platform::DATA_DIR;
-
-/// How old the sources' catalogues may be when the list or the home screen
-/// opens: events start and end, signals come shortly before.
-const CATALOGUE_AGE: Duration = Duration::from_secs(5 * 60);
 
 /// The state of the channel list, as the screens say it.
 pub(super) enum ListState<'a> {
@@ -45,6 +40,7 @@ impl App {
     pub fn refresh(&mut self) {
         self.languages.refresh();
         self.refresh_signals();
+        self.take_catalogues();
         self.take_phone_request();
         while let Some(update) = self.updater.as_mut().and_then(Updater::poll) {
             self.answer_phone(&update);
@@ -59,23 +55,17 @@ impl App {
         self.sync_page();
     }
 
-    /// Reads the sources' catalogues again, with the list, when the copy
-    /// shown is CATALOGUE_AGE old: called as the list or the home screen
-    /// opens.
-    pub(super) fn refresh_catalogues(&mut self) {
-        if let Some(updater) = &mut self.updater {
-            updater.refresh_catalogues(CATALOGUE_AGE);
-        }
-    }
-
     /// Shows `channels` instead, on both screens, each focus kept on the
-    /// channel of the same name, or on the same clip.
+    /// channel of the same name, or on the same clip; kept for when the
+    /// folder closes, while one is open.
     fn replace_channels(&mut self, channels: Vec<Channel>) {
+        if let Some(list) = self.list_behind_folder() {
+            *list = channels;
+            return;
+        }
         let before = self.channels.len();
-        let focused = self.channels.channels().get(self.focus).map(|c| c.name.clone());
-        self.channels.replace(channels);
-        self.focus = match focused {
-            Some(name) => name.and_then(|name| self.channels.position(&name)).unwrap_or(0),
+        self.focus = match self.channels.replace(channels, self.focus) {
+            Some(row) => row,
             // The first clip was focused only because no channel had come
             // yet: the screen opens on the first channel.
             None if before == 0 && self.focus == 0 => 0,
