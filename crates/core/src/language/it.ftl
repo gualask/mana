@@ -125,6 +125,13 @@ demux-aac-config = AAC senza configurazione nell'MP4
 demux-read = impossibile leggere il flusso: { $detail }
 demux-rewind = impossibile tornare all'inizio del file: { $detail }
 
+## Signals
+
+signals-title = Segnali
+signals-asking = Cerco i segnali…
+signals-in-use = in uso
+signals-failed = non va
+
 ## Home screen
 
 home-subtitle = Prova di fattibilità · canali della lista, poi clip e dirette di prova

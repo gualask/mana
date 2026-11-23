@@ -228,7 +228,7 @@ fn play(table: &DeTable, name: &str, sources: &Sources, device: &impl Fn() -> Op
                 table.keys().filter_map(|key| Some((key.get_ref().to_string(), field(table, key.get_ref())?))).collect();
             fields.insert(TITLE.into(), name.into());
             let item = Item { fields };
-            Ok(Play::Source(Selection { source: found.clone(), item, device: device().unwrap_or_default() }))
+            Ok(Play::Source(Selection { source: found.clone(), item, device: device().unwrap_or_default(), candidate: None }))
         }
         (Some(_), Some(_)) => Err(ChannelError::BothUrlAndSource),
         (None, None) => Err(ChannelError::NeitherUrlNorSource),

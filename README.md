@@ -62,6 +62,7 @@ While watching:
 | OK | opens the channel list over the live stream |
 | Up and down | show and hide the information panel |
 | Right | opens the quality menu, on live streams that offer more than one |
+| Left | opens the signals of the channel or event, when its source gives several |
 | Back | closes the list or menu; otherwise stops playback |
 
 ## Status

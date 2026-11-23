@@ -29,12 +29,13 @@ use crate::source::run::{Candidate, Engine, MAX_ANSWER_BYTES, Outcome, Request, 
 /// about two minutes, an occasional one is always recovered.
 pub const MAX_REOPENINGS: usize = 6;
 const REOPEN_WINDOW: Duration = Duration::from_secs(300);
-/// Network failures, one second apart, that open a candidate of a source
-/// before the next one is tried, when there is one: an unreachable host
-/// must give way. As Media3's playlists (3 retries); hls.js gives up a
-/// manifest after 1 retry, FFmpeg's hls.c does not retry it. Without a
-/// next candidate, and for a stream the list gives, opening goes on until
-/// the network is back, as a TV tunes in again.
+/// Network failures, one second apart, that open a candidate the viewer
+/// chose among several before playback ends, so that they can choose
+/// another: an unreachable host must not hold the screen. As Media3's
+/// playlists (3 retries); hls.js gives up a manifest after 1 retry, FFmpeg's
+/// hls.c does not retry it. With nothing else to choose, as for a stream
+/// the list gives, opening goes on until the network is back, as a TV
+/// tunes in again.
 const CANDIDATE_ATTEMPTS: u32 = 3;
 
 /// What to do once an opening of a live stream ended.
@@ -127,9 +128,9 @@ pub(super) fn run(
     play_stream(playable.clone(), &mut || Ok(playable.clone()), None, settings, open, stop, shared, quality)
 }
 
-/// Plays an item of a source: its candidates in order, each resolved and
-/// played as long as it can be, the next one when it gives nothing or
-/// fails; the last failure when none plays.
+/// Plays an item of a source: the candidate the viewer chose, else the
+/// item's first, resolved and played as long as it can be. Mana does not
+/// pass to another candidate by itself: the viewer chooses again.
 fn play_source(
     selection: &Selection,
     settings: &Settings,
@@ -141,35 +142,31 @@ fn play_source(
     let (source, item) = (&selection.source, &selection.item);
     log!("source {}: {}", source.id, item.fields.get("title").map_or("", String::as_str));
     let client = Client::new().map_err(|e| Failure::Live(Interruption::Failed(Cause::Client(e))))?;
-    let fetch = |request: &Request| client.send(request.method, &request.url, &request.headers, request.body.as_deref(), MAX_ANSWER_BYTES);
-    let mut engine = Engine::new(source, &selection.device, fetch, || stop.load(Ordering::Relaxed));
-    let candidates = match engine.sources(item) {
+    let mut engine = engine(selection, &client, stop);
+    let candidate = match &selection.candidate {
+        Some(candidate) => candidate.clone(),
+        None => match engine.sources(item) {
+            Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
+            Err(failure) => return Err(Failure::Source(failure)),
+            Ok(candidates) => candidates.into_iter().next().expect("sources gives at least one candidate"),
+        },
+    };
+    let id = candidate.fields.get("id").map_or("", String::as_str);
+    let resolved = match engine.resolve(&candidate, item) {
         Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
         other => other.map_err(Failure::Source)?,
     };
-    let mut last = None;
-    for (n, candidate) in candidates.iter().enumerate() {
-        let id = candidate.fields.get("id").map_or("", String::as_str);
-        let attempts = (n + 1 < candidates.len()).then_some(CANDIDATE_ATTEMPTS);
-        let failure = match engine.resolve(candidate, item) {
-            Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
-            Err(failure) => Failure::Source(failure),
-            Ok(resolved) => {
-                log!("candidate {id} resolved: {}", net::loggable(&resolved.url));
-                let mut renew = || renewed(&mut engine, candidate, item);
-                match play_stream(playable(resolved), &mut renew, attempts, settings, open, stop, shared, quality) {
-                    Ok(()) => return Ok(()),
-                    Err(failure) => failure,
-                }
-            }
-        };
-        if stop.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        log!("candidate {id} gave nothing to play: {failure}");
-        last = Some(failure);
-    }
-    Err(last.expect("sources gives at least one candidate"))
+    log!("candidate {id} resolved: {}", net::loggable(&resolved.url));
+    // A candidate chosen among several gives way to the viewer's choice.
+    let attempts = selection.candidate.is_some().then_some(CANDIDATE_ATTEMPTS);
+    let mut renew = || renewed(&mut engine, &candidate, item);
+    play_stream(playable(resolved), &mut renew, attempts, settings, open, stop, shared, quality)
+}
+
+/// An engine for `selection`'s source, on `client`, given up once `stop`.
+pub(super) fn engine<'a>(selection: &'a Selection, client: &'a Client, stop: &'a AtomicBool) -> Engine<'a> {
+    let fetch = |request: &Request| client.send(request.method, &request.url, &request.headers, request.body.as_deref(), MAX_ANSWER_BYTES);
+    Engine::new(&selection.source, &selection.device, fetch, || stop.load(Ordering::Relaxed))
 }
 
 /// `candidate` resolved again, its token having been refused.

@@ -13,6 +13,7 @@ mod loader;
 pub mod logos;
 mod qr;
 pub mod quality_menu;
+pub mod signals_menu;
 mod setup;
 pub mod text;
 mod video;
@@ -29,8 +30,9 @@ use logos::Logos;
 use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::catalog::update::{self, Updater};
 use mana_core::language::{Language, Localized};
-use mana_core::session::{Failure, Program, Session, Stats};
+use mana_core::session::{Failure, Program, Session, State, Stats};
 use quality_menu::QualityMenu;
+use signals_menu::SignalsMenu;
 use setup::Setup;
 use text::Text;
 
@@ -99,6 +101,10 @@ pub struct App {
     logos: Logos,
     /// Open over the video with Right, while the live stream offers heights.
     quality_menu: Option<QualityMenu>,
+    /// The signals of the channel chosen last, when its source gives
+    /// several: kept while it plays, so that Left opens them again.
+    signals: Option<SignalsMenu>,
+    signals_open: bool,
     /// Over the video, toggled with Up or Down and closed at first: a static
     /// panel left on screen can mark an OLED panel.
     info: InfoPanel,
@@ -134,6 +140,8 @@ impl App {
             channels_open: false,
             logos: Logos::new(IMAGE_SLOTS),
             quality_menu: None,
+            signals: None,
+            signals_open: false,
             info: InfoPanel::default(),
             hits: Hits::default(),
         }
@@ -155,9 +163,10 @@ impl App {
         self.session.is_playing()
     }
 
-    /// Whether a viewing waits for its first frame, the loader turning.
+    /// Whether a viewing waits for its first frame, the loader turning, or
+    /// the signals of a channel are on their way.
     pub fn waiting_for_video(&self) -> bool {
-        self.session.stats().is_some_and(|stats| loader::waiting(&stats))
+        self.session.stats().is_some_and(|stats| loader::waiting(&stats)) || self.signals.as_ref().is_some_and(SignalsMenu::asking)
     }
 
     pub fn clips(&self) -> &[PathBuf] {
@@ -224,6 +233,10 @@ impl App {
     pub fn handle(&mut self, action: Action) -> Outcome {
         // The screen may change: its rows are known again once drawn.
         self.hits.clear();
+        if self.signals_open {
+            self.handle_signals(action);
+            return Outcome::Continue;
+        }
         if !self.session.is_playing() {
             self.quality_menu = None;
             if self.setup.is_some() {
@@ -245,12 +258,47 @@ impl App {
     /// Plays the focused channel; the reason it cannot be played, if so.
     fn play_focused_channel(&mut self) -> Result<(), ChannelError> {
         let Some(channel) = self.channels.focused() else { return Ok(()) };
+        let name = channel.title(self.languages.current()).to_string();
         let program = match channel.play.clone()? {
             Play::Stream(playable) => Program::Live(playable),
+            // Several signals: the viewer chooses one, what plays goes on.
+            Play::Source(selection) if selection.source.sources.is_some() => {
+                self.signals = Some(SignalsMenu::ask(name, selection));
+                self.signals_open = true;
+                return Ok(());
+            }
             Play::Source(selection) => Program::Source(selection),
         };
-        self.start(channel.title(self.languages.current()).to_string(), program);
+        self.start(name, program);
         Ok(())
+    }
+
+    /// Plays the signal at `index` of the menu, which stays for Left.
+    fn play_signal(&mut self, index: usize) {
+        let Some(mut menu) = self.signals.take() else { return };
+        let chosen = menu.choose(index);
+        let name = menu.name.clone();
+        if let Some(selection) = chosen {
+            self.start(name, Program::Source(selection));
+        }
+        self.signals = Some(menu);
+        self.signals_open = false;
+    }
+
+    /// Takes the signals once they come, playing the only one at once, and
+    /// opens the menu again when the signal in use failed.
+    fn refresh_signals(&mut self) {
+        let Some(menu) = &mut self.signals else { return };
+        if menu.refresh() && menu.candidates().len() == 1 {
+            self.play_signal(0);
+            return;
+        }
+        if menu.in_use()
+            && let Some(Stats { state: State::Failed(failure), .. }) = self.session.stats()
+        {
+            menu.failed(failure);
+            self.signals_open = true;
+        }
     }
 
     /// Starts a viewing with the playback settings of the files as they are
@@ -259,6 +307,8 @@ impl App {
     /// page.
     fn start(&mut self, name: String, program: Program) {
         self.setup = None;
+        self.signals = None;
+        self.signals_open = false;
         self.info.started();
         self.message = self.session.play(name, program, settings::load().playback).err().map(Message::NotStarted);
     }
@@ -279,6 +329,11 @@ impl App {
         } else {
             r.begin(surface.0, surface.1, Color::TRANSPARENT);
             self.draw_over_video(r, t, s, surface, language);
+        }
+        if self.signals_open
+            && let Some(menu) = &self.signals
+        {
+            menu.draw(r, t, s, &mut self.hits, language);
         }
         r.finish();
     }

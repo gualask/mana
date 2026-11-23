@@ -20,6 +20,7 @@ pub enum Target {
     Language,
     Channel(usize),
     Quality(usize),
+    Signal(usize),
 }
 
 /// The rows of the last frame drawn, in drawable pixels.
@@ -58,7 +59,7 @@ impl App {
     /// Whether the pointer has nothing to point at: over the video, with no
     /// list or menu open, where a click is OK.
     fn over_video(&self) -> bool {
-        self.session.is_playing() && !self.channels_open && self.quality_menu.is_none()
+        self.session.is_playing() && !self.channels_open && self.quality_menu.is_none() && !self.signals_open
     }
 
     /// The pointer at `(x, y)`, in drawable pixels: the row under it takes
@@ -76,6 +77,11 @@ impl App {
             Target::Channel(i) => self.channels.point(i),
             Target::Quality(i) => {
                 if let Some(menu) = &mut self.quality_menu {
+                    menu.set_focus(i);
+                }
+            }
+            Target::Signal(i) => {
+                if let Some(menu) = &mut self.signals {
                     menu.set_focus(i);
                 }
             }

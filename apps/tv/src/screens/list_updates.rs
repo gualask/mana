@@ -39,6 +39,7 @@ impl App {
     /// turn of the event loop.
     pub fn refresh(&mut self) {
         self.languages.refresh();
+        self.refresh_signals();
         self.take_phone_request();
         while let Some(update) = self.updater.as_mut().and_then(Updater::poll) {
             self.answer_phone(&update);

@@ -135,6 +135,9 @@ pub struct Selection {
     pub source: Arc<Source>,
     pub item: Item,
     pub device: String,
+    /// The candidate the viewer chose among the item's several; without
+    /// one, the item's first.
+    pub candidate: Option<run::Candidate>,
 }
 
 fn read(value: &Value) -> Result<Source, Error> {

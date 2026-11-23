@@ -79,13 +79,20 @@ request of the channel ([m3u.rs](../crates/core/src/catalog/m3u.rs)).
 
 ## Playing a channel with a source
 
-When the channel opens, the session asks the source for the item's
-candidates (the item itself without `sources`) and tries them in order:
-each is resolved and its stream opened; one that does not resolve, or whose
-stream cannot be opened or plays no more, gives way to the next. While
-another candidate waits, an unreachable stream gives way after 3 attempts
-a second apart, as Media3 gives up a playlist; the last candidate, as a
-channel with a URL, is tried until the network is back. A token
-refused while watching has the same candidate resolved again, within the
-budget of reopenings ([reopen.rs](../crates/core/src/session/reopen.rs)).
-When no candidate plays, playback ends with the last reason.
+A channel whose source has no `sources` flow is its only candidate and
+plays at once. Otherwise OK asks the source for the item's candidates and
+shows them in a menu, by their `label` or else their `id`, while what was
+playing goes on; with a single candidate, it plays at once. The candidate
+chosen is resolved and played; Left opens the menu again while it plays,
+with the one in use marked, to choose another
+([signals_menu.rs](../apps/tv/src/screens/signals_menu.rs)).
+
+Mana does not pass to another candidate by itself: one that does not
+resolve, or whose stream cannot be opened or plays no more, ends playback,
+and the menu opens again with that candidate marked and the reason. Its
+stream gives up after 3 network failures a second apart, as Media3 gives up
+a playlist, so that an unreachable host does not hold the screen; a channel
+with a URL, or a source's only candidate, is tried until the network is
+back. A token refused while watching has the same candidate resolved
+again, within the budget of reopenings
+([reopen.rs](../crates/core/src/session/reopen.rs)).

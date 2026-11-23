@@ -273,7 +273,14 @@ fn source_item(text: &str, address: &str, fields: &[(&str, &str)]) -> Program {
     let source = crate::source::Source::from_toml(&text.replace("{ADDRESS}", address)).unwrap();
     let fields = fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let item = crate::source::Item { fields };
-    Program::Source(Selection { source: Arc::new(source), item, device: "d-1".into() })
+    Program::Source(Selection { source: Arc::new(source), item, device: "d-1".into(), candidate: None })
+}
+
+/// As `source_item`, the candidate `id` chosen.
+fn chosen(text: &str, address: &str, id: &str) -> Program {
+    let Program::Source(mut selection) = source_item(text, address, &[("id", "e1")]) else { unreachable!() };
+    selection.candidate = Some(crate::source::run::Candidate { fields: [("id".to_string(), id.to_string())].into() });
+    Program::Source(selection)
 }
 
 const MEDIA: &[u8] = b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\naudio.aac\n#EXT-X-ENDLIST\n";
@@ -359,59 +366,87 @@ op = "stream"
 url = "{link.text}"
 "#;
 
-#[test]
-fn the_next_candidate_plays_when_one_does_not_resolve_or_its_media_is_refused() {
-    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let (address, asked) = serve(|path| match path {
-        "/event.json" => (200, br#"["closed", "denied", "open"]"#.to_vec()),
+/// Answers for SIGNALS: one the API refuses to resolve, one whose host
+/// refuses connections, one that plays; `hosts` are the URL of a port
+/// nothing listens on and the test server's address.
+fn signals(path: &str, hosts: &(String, String)) -> (u16, Vec<u8>) {
+    match path {
+        "/event.json" => (200, br#"["closed", "unreachable", "open"]"#.to_vec()),
         "/link/closed" => (403, Vec::new()),
-        "/link/denied" => (200, format!("{}/denied.m3u8", ADDRESS.get().unwrap()).into_bytes()),
-        "/link/open" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
-        "/master.m3u8" => (200, MASTER.into()),
-        "/media.m3u8" => (200, MEDIA.to_vec()),
-        "/audio.aac" => (200, packed_audio_segment()),
-        _ => (403, Vec::new()),
-    });
-    ADDRESS.set(address.clone()).unwrap();
-    let (open, _) = fake::open();
-    let mut session = Session::new(open);
-    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1"), ("title", "Event")]), Settings::default()).unwrap();
-    assert_eq!(ended(&session), "Error: the stream has no video");
-    let asked = asked.lock().unwrap();
-    let paths: Vec<&str> = asked.iter().map(|a| a.path.as_str()).collect();
-    // The refused media is resolved again within the budget, then left.
-    let denied = 1 + reopen::MAX_REOPENINGS;
-    assert_eq!(paths.iter().filter(|p| **p == "/denied.m3u8").count(), denied);
-    assert_eq!(paths.iter().filter(|p| **p == "/link/denied").count(), denied);
-    assert_eq!(paths[..2], ["/event.json", "/link/closed"]);
-    assert_eq!(paths[paths.len() - 4..], ["/link/open", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
-}
-
-#[test]
-fn an_unreachable_candidate_gives_way_to_the_next_after_a_few_attempts() {
-    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    static CLOSED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    // A port nothing listens on: every connection is refused.
-    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    CLOSED.set(format!("http://{closed}/master.m3u8")).unwrap();
-    let (address, asked) = serve(|path| match path {
-        "/event.json" => (200, br#"["unreachable", "open"]"#.to_vec()),
-        "/link/unreachable" => (200, CLOSED.get().unwrap().clone().into_bytes()),
-        "/link/open" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        "/link/unreachable" => (200, hosts.0.clone().into_bytes()),
+        "/link/open" => (200, format!("{}/master.m3u8", hosts.1).into_bytes()),
         "/master.m3u8" => (200, MASTER.into()),
         "/media.m3u8" => (200, MEDIA.to_vec()),
         "/audio.aac" => (200, packed_audio_segment()),
         _ => (404, Vec::new()),
-    });
-    ADDRESS.set(address.clone()).unwrap();
+    }
+}
+
+/// A server of `signals` for one test, `hosts` its own static.
+fn serve_signals(answer: fn(&str) -> (u16, Vec<u8>), hosts: &std::sync::OnceLock<(String, String)>) -> (String, Arc<Mutex<Vec<Asked>>>) {
+    let (address, asked) = serve(answer);
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+    hosts.set((format!("http://{closed}/master.m3u8"), address.clone())).unwrap();
+    (address, asked)
+}
+
+fn paths(asked: &Mutex<Vec<Asked>>) -> Vec<String> {
+    asked.lock().unwrap().iter().map(|a| a.path.clone()).collect()
+}
+
+#[test]
+fn the_candidates_of_an_item_come_on_their_own_thread_in_the_source_s_order() {
+    static HOSTS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    let (address, _) = serve_signals(|path| signals(path, HOSTS.get().unwrap()), &HOSTS);
+    let Program::Source(selection) = source_item(SIGNALS, &address, &[("id", "e1")]) else { unreachable!() };
+    let asked = Candidates::ask(&selection);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let found = loop {
+        if let Some(found) = asked.poll() {
+            break found.unwrap();
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let ids: Vec<&str> = found.iter().map(|c| c.fields["id"].as_str()).collect();
+    assert_eq!(ids, ["closed", "unreachable", "open"]);
+}
+
+#[test]
+fn a_chosen_candidate_plays_alone() {
+    static HOSTS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    let (address, asked) = serve_signals(|path| signals(path, HOSTS.get().unwrap()), &HOSTS);
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), chosen(SIGNALS, &address, "open"), Settings::default()).unwrap();
+    assert_eq!(ended(&session), "Error: the stream has no video");
+    assert_eq!(paths(&asked), ["/link/open", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
+}
+
+#[test]
+fn a_chosen_candidate_that_fails_ends_with_its_reason_and_no_other_is_tried() {
+    static HOSTS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    let (address, asked) = serve_signals(|path| signals(path, HOSTS.get().unwrap()), &HOSTS);
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), chosen(SIGNALS, &address, "closed"), Settings::default()).unwrap();
+    let state = ended(&session);
+    assert!(state.contains("resolve.link: access denied"), "{state}");
+    assert_eq!(paths(&asked), ["/link/closed"]);
+}
+
+#[test]
+fn a_chosen_unreachable_candidate_ends_after_a_few_attempts() {
+    static HOSTS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    let (address, asked) = serve_signals(|path| signals(path, HOSTS.get().unwrap()), &HOSTS);
     let (open, _) = fake::open();
     let mut session = Session::new(open);
     let started = Instant::now();
-    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
-    assert_eq!(ended(&session), "Error: the stream has no video");
+    session.play("Event".into(), chosen(SIGNALS, &address, "unreachable"), Settings::default()).unwrap();
+    let state = ended(&session);
+    assert!(state.contains("/master.m3u8"), "{state}");
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
-    let paths: Vec<String> = asked.lock().unwrap().iter().map(|a| a.path.clone()).collect();
-    assert_eq!(paths, ["/event.json", "/link/unreachable", "/link/open", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
+    assert_eq!(paths(&asked), ["/link/unreachable"]);
 }
 
 #[test]

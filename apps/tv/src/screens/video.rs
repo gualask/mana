@@ -25,6 +25,22 @@ impl App {
         }
     }
 
+    pub(super) fn handle_signals(&mut self, action: Action) {
+        let Some(menu) = &mut self.signals else {
+            self.signals_open = false;
+            return;
+        };
+        match action {
+            Action::Up => menu.step(-1),
+            Action::Down => menu.step(1),
+            Action::Select if !menu.candidates().is_empty() => {
+                let focused = menu.focused();
+                self.play_signal(focused);
+            }
+            Action::Select | Action::Back | Action::Left | Action::Right => self.signals_open = false,
+        }
+    }
+
     pub(super) fn handle_quality_menu(&mut self, action: Action) {
         let Some(menu) = &mut self.quality_menu else { return };
         let heights = self.session.stats().map(|s| s.live.heights).unwrap_or_default();
@@ -48,7 +64,7 @@ impl App {
             Action::Select => self.channels_open = true,
             Action::Up | Action::Down => self.info.toggle(),
             Action::Right => self.open_quality_menu(),
-            Action::Left => {}
+            Action::Left => self.signals_open = self.signals.is_some(),
         }
     }
 

@@ -174,8 +174,8 @@ without a match, a decryption that does not authenticate), `unsupported_host`,
 itself is a limit.
 
 The engine does not check the media: whether the stream plays is the
-player's to say, and trying the next candidate when it does not is the
-session's ([Channel list](channel-list.md#playing-a-channel-with-a-source)).
+player's to say, and choosing another candidate when it does not is the
+viewer's ([Channel list](channel-list.md#playing-a-channel-with-a-source)).
 
 ## Composable resolvers
 
@@ -243,8 +243,8 @@ duplicate keys are a TOML error.
 ## Not built yet
 
 - JSON import into the same `Source`, with the file in the errors.
-- A source's catalogue as channels or events in the interface, and choosing
-  among an event's signals ([Next steps](todo.md)).
+- A source's catalogue as channels or events in the interface
+  ([Next steps](todo.md)).
 - Catalogue pagination: no case has needed it.
 
 The order is in [Next steps](todo.md).

@@ -8,7 +8,7 @@
 - [x] Run HTTP/JSON recipes and composable resolvers — done when nested detail, dispatch and resolver chains work with finite budgets and without provider logic in the UI ([resolution](architecture.md#step-by-step-resolution)).
 - [x] Connect the resolvers of the encrypted and binary fixtures through the registry — done when the runtime resolves both cases and rejects tampered wrappers or wrong sessions ([scenarios](local-lab.md#three-origins-and-available-scenarios)).
 - [ ] Connect the e2e tests to the runtime and the application session — done when the player performs fallback, renewal after expiry and cancellation on channel change, discarding late results; the suite also verifies empty events and denials ([e2e](local-lab.md#moving-to-player-e2e-tests)).
-- [ ] Choose an event's signal from a list — done when OK on a channel or event whose source gives several candidates shows them with their labels, choosing one plays it, Mana no longer passes to the next one by itself, and the list can be opened again while watching to change signal ([playing a channel with a source](channel-list.md#playing-a-channel-with-a-source)).
+- [x] Choose an event's signal from a list — done when OK on a channel or event whose source gives several candidates shows them with their labels, choosing one plays it, Mana no longer passes to the next one by itself, and the list can be opened again while watching to change signal ([playing a channel with a source](channel-list.md#playing-a-channel-with-a-source)).
 - [ ] Build the desktop app — done when `apps/desktop` on the Mac plays a lab live stream and a clip with synchronized audio, measured with `dev/tv/avsync.py`, the channel list scrolls over the video at 50 fps, and `.local/rune-ui/` is deleted ([desktop client](architecture.md#desktop-client)).
 
 ## Open questions
@@ -24,6 +24,9 @@
 - Offer the automatic passing to the next signal as a setting?
   - Evidence (23 November): the user wants to choose the signal from a list rather than have Mana pass to the next one by itself, which keeps a signal that plays badly as long as it does not stop.
   - To decide: whether the setting is worth its complexity, once the list of signals exists.
+- Stop resolving a candidate again when the new URL is the one just refused?
+  - Evidence (23 November): on the TV, a signal of an unofficial sports source answered 403 to its media; each of the 6 new resolutions allowed gave the same URL, refused again, and the menu of signals opened again after about 6 s.
+  - To decide: whether an identical URL ends the attempts at once, or a source may give the same URL with a token renewed on its server ([reopen.rs](../crates/core/src/session/reopen.rs)).
 - Keep the channel logos in a disk cache?
   - Evidence (17 November): in the test with 600 channels, Wikimedia answered 429 to about sixty logos requested in a burst, even with a User-Agent. Stremio Origin and PlxNative keep logos on disk (40 and 128 MB), and the app's in-memory cache loses them at every start.
   - Evidence (19 November): the user wants the cache without clogging the TV with useless or heavy files, and wants to try the logos with Chrome's User-Agent only together with the cache, so as not to risk blocks from Wikimedia. The logos are drawn in 128×72 cells ([gfx.rs](../apps/tv/src/screens/gfx.rs)), while a downloaded file can reach 2 MB: the cache would keep the recompressed thumbnail, a few KB, with an overall cap and eviction of the least used, in a folder that survives power-off.

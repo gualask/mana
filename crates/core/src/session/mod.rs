@@ -6,6 +6,7 @@
 //! for the threads. Clients (the TV's remote, the unattended tests, the
 //! desktop app) start, change and stop viewings only through it.
 
+mod candidates;
 mod reopen;
 mod stats;
 
@@ -22,6 +23,7 @@ use crate::playback::{BackendError, OpenBackend, Settings};
 use crate::source::Selection;
 pub use crate::live::Quality;
 pub use crate::live::playable::EXTENSION as STREAM_EXTENSION;
+pub use candidates::Candidates;
 pub use stats::{Failure, State, Stats};
 use stats::Shared;
 

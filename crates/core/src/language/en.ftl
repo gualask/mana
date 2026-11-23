@@ -127,6 +127,13 @@ demux-aac-config = AAC without configuration in the MP4
 demux-read = cannot read the stream: { $detail }
 demux-rewind = cannot go back to the start of the file: { $detail }
 
+## Signals
+
+signals-title = Signals
+signals-asking = Looking for the signals…
+signals-in-use = in use
+signals-failed = does not play
+
 ## Home screen
 
 home-subtitle = Feasibility test · the list's channels, then test clips and live streams
