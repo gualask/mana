@@ -4,6 +4,7 @@
 use std::time::Instant;
 
 use super::super::playlist;
+use crate::live::Cause;
 use crate::log::log;
 use crate::net;
 
@@ -14,39 +15,45 @@ const LOGGED_FAILURES: u32 = 3;
 /// apart.
 pub(in crate::live::hls) enum Failure {
     /// Worth retrying: the network, the server, a damaged answer.
-    Transient(String),
+    Transient(Cause),
     /// The URL's token refused: only a new resolution gives new URLs.
-    Refused(String),
+    Refused(Cause),
     /// HLS features this client does not have, or an answer larger than
     /// it takes: retrying cannot help.
-    Unsupported(String),
+    Unsupported(Cause),
 }
 
 impl From<net::Error> for Failure {
     fn from(error: net::Error) -> Self {
-        if error.is_refused() {
-            Self::Refused(error.into())
-        } else if error.is_oversized() {
-            Self::Unsupported(error.into())
-        } else {
-            Self::Transient(error.into())
-        }
+        Self::of_network(&error)(error.into())
     }
 }
 
 impl From<playlist::Error> for Failure {
     fn from(error: playlist::Error) -> Self {
         match error {
-            playlist::Error::Invalid(message) => Self::Transient(message),
-            playlist::Error::Unsupported(message) => Self::Unsupported(message),
+            playlist::Error::Invalid(_) => Self::Transient(error.into()),
+            playlist::Error::Unsupported(_) => Self::Unsupported(error.into()),
         }
     }
 }
 
 impl Failure {
-    pub(in crate::live::hls) fn message(self) -> String {
+    /// The kind of failure a network error makes, for the cause it stopped:
+    /// the error itself, or a recipe that downloads.
+    pub(in crate::live::hls) fn of_network(error: &net::Error) -> fn(Cause) -> Self {
+        if error.is_refused() {
+            Self::Refused
+        } else if error.is_oversized() {
+            Self::Unsupported
+        } else {
+            Self::Transient
+        }
+    }
+
+    pub(in crate::live::hls) fn cause(self) -> Cause {
         match self {
-            Self::Transient(message) | Self::Refused(message) | Self::Unsupported(message) => message,
+            Self::Transient(cause) | Self::Refused(cause) | Self::Unsupported(cause) => cause,
         }
     }
 }
@@ -67,11 +74,11 @@ impl Failures {
 
     /// Counts one and logs it, only every tenth past LOGGED_FAILURES; an
     /// error once there were as many as the attempts allowed.
-    pub(super) fn count(&mut self, error: String) -> Result<(), Failure> {
+    pub(super) fn count(&mut self, error: Cause) -> Result<(), Failure> {
         self.count += 1;
         self.since.get_or_insert_with(Instant::now);
         if self.count <= LOGGED_FAILURES || self.count.is_multiple_of(10) {
-            log!("{}: {error} (tentativo {})", self.label, self.count);
+            log!("{}: {error} (attempt {})", self.label, self.count);
         }
         match self.attempts {
             Some(max) if self.count >= max => Err(Failure::Transient(error)),
@@ -82,7 +89,7 @@ impl Failures {
     /// Logs how long the download failed, when it did.
     pub(super) fn recovered(&self) {
         if let Some(since) = self.since {
-            log!("{}: di nuovo raggiungibile dopo {} s", self.label, since.elapsed().as_secs());
+            log!("{}: reachable again after {} s", self.label, since.elapsed().as_secs());
         }
     }
 }

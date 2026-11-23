@@ -8,59 +8,62 @@ no list URL: each user provides their own.
 
 The list is a TOML file at a URL, downloaded at every start: it is updated
 by editing that file, without a new version of the app. The app immediately
-shows the copy saved at the last update in `/media/developer/mana/lista/`,
+shows the copy saved at the last update in `/media/developer/mana/list/`,
 and replaces it with the downloaded one only if it is valid TOML; with no
 network and no copy, the home screen says so.
 
-"Impostazioni" (Settings), at the top right of the home screen (right
-arrow), shows a QR code and the address `http://<IP della TV>:8080/<codice>`,
+"Settings" ("Impostazioni"), at the top right of the home screen (right
+arrow), shows a QR code and the address `http://<TV address>:8080/<code>`,
 with the next port if that one is taken and a new code at every opening; the
-page, served as long as the screen stays open, shows the URL in use and,
-with "Cambia indirizzo" (Change address), a field for the new one. The TV
+page, served as long as the screen stays open in the app's language, shows
+the URL in use and, with "Change address", a field for the new one. The TV
 downloads the list immediately and keeps it, saving the URL in
-`/media/developer/mana/lista/scelta.url`, only if it is valid TOML;
+`/media/developer/mana/list/chosen.url`, only if it is valid TOML;
 otherwise the phone receives the reason and the previous list stays
 ([phone/](../apps/tv/src/phone/mod.rs),
-[update.rs](../crates/core/src/catalog/update.rs)). A `lista` in the
+[update.rs](../crates/core/src/catalog/update.rs)). A `list` in the
 [settings](tv-app.md#files-and-settings-on-the-tv) takes precedence over the
-URL chosen from the phone, and "Impostazioni" says so. "Aggiorna lista"
-(Update list), in "Impostazioni", downloads the list in use again without
-waiting for the next start.
+URL chosen from the phone, and "Settings" says so. "Update list", in
+"Settings", downloads the list in use again without waiting for the next
+start.
 
 ## Format
 
 ```toml
-[ricette.esempio]
-passi = [
-  "get https://tv.invalid/dirette/{id}.json",
+[recipes.example]
+steps = [
+  "get https://tv.invalid/live/{id}.json",
   "json video.content_url",
-  "query formato=hls",
+  "query format=hls",
   "get",
   "json video.0",
 ]
 
-[[canali]]
-nome = "Canale 1"
-logo = "https://tv.invalid/loghi/canale1.png"  # optional, like `gruppo`
-ricetta = "esempio"
-id = "canale1"
+[[channels]]
+name = "Channel 1"
+logo = "https://tv.invalid/logos/channel1.png"  # optional, like `group`
+recipe = "example"
+id = "channel1"
 
-[[canali]]
-nome = "Canale 2"
-url = "https://tv.invalid/canale2/playlist.m3u8"
+[[channels]]
+name = "Channel 2"
+url = "https://tv.invalid/channel2/playlist.m3u8"
 header = { "User-Agent" = "…" }  # optional
 
-[[includi]]
-m3u = "https://liste.invalid/canali.m3u"
+[[include]]
+m3u = "https://lists.invalid/channels.m3u"
 ```
 
-Channels and included M3U lists appear in file order. A channel has `nome`
-and exactly one of `url` and `ricetta`; its other fields are the recipe's
-parameters, written `{nome}` in the steps, and `{dispositivo}` is a UUID
-created when first needed and kept in `/media/developer/mana/dispositivo`.
-An unknown field is ignored; a channel with no name, with both or neither of
-`url` and `ricetta`, with a nonexistent recipe or an unknown step stays in
-the list as unavailable, with the reason in the log
+Channels and included M3U lists appear in file order. A channel has `name`
+and exactly one of `url` and `recipe`; its other fields are the recipe's
+parameters, written `{field}` in the steps (`{id}` above), and `{device}` is a UUID created
+when first needed and kept in `/media/developer/mana/device`. The keys
+are in English: a list written with the Italian keys of the first versions
+(`canali` at the root) is refused, with an error that names `channels`; the
+other old keys are unknown fields like any other. An unknown field is
+ignored; a channel with no name, with both or neither of `url` and `recipe`,
+with a nonexistent recipe or an unknown step stays in the list as
+unavailable, with the reason in the log
 ([list.rs](../crates/core/src/catalog/list.rs)). An included list that
 cannot be downloaded uses its copy, otherwise it is skipped. The entries of
 an M3U list can declare headers (`#EXTVLCOPT:http-user-agent=`,
@@ -75,9 +78,9 @@ replace. The steps are run on the TV at every opening, each on the result of
 the previous one ([recipe.rs](../crates/core/src/live/recipe.rs)):
 
 - `get [URL]`: downloads the URL, or the one produced by the previous step;
-- `json campo.0`: extracts a value from the JSON;
-- `query nome=valore`: sets a query parameter of the URL;
-- `testo MODELLO`: builds a text, with `{json:campo.0}` taken from the JSON.
+- `json field.0`: extracts a value from the JSON;
+- `query name=value`: sets a query parameter of the URL;
+- `text TEMPLATE`: builds a text, with `{json:field.0}` taken from the JSON.
 
 The same steps, written `resolve = …`, apply in
 [`.stream`](tv-app.md#files-and-settings-on-the-tv) files.

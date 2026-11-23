@@ -160,7 +160,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (Some(pid), Some(seconds)) = (args.get(1).and_then(|a| a.parse().ok()), args.get(2).and_then(|a| a.parse().ok()))
     else {
-        eprintln!("uso: mana-sampler PID SECONDI");
+        eprintln!("usage: mana-sampler PID SECONDS");
         std::process::exit(2);
     };
     let stdout = std::io::stdout();

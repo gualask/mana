@@ -1,4 +1,4 @@
-//! Compiles the FFmpeg demuxer shim and links FFmpeg. Paths are relative to
+//! Compiles the FFmpeg demuxer shim (src/playback/ffmpeg/*.c) and links FFmpeg. Paths are relative to
 //! the workspace root.
 //!
 //! For the TV (32-bit ARM Linux): the LGPL build bundled with the app
@@ -46,9 +46,12 @@ fn main() {
         if tv { "run python3 tools/webos/ffmpeg.py" } else { "MANA_FFMPEG must name a prefix with include/ and lib/" }
     );
     println!("cargo::rerun-if-changed={}", ffmpeg.include.join("libavformat/version.h").display());
-    println!("cargo::rerun-if-changed=src/playback/ffmpeg/shim.c");
+    println!("cargo::rerun-if-changed=src/playback/ffmpeg");
     cc::Build::new()
         .file("src/playback/ffmpeg/shim.c")
+        .file("src/playback/ffmpeg/probe.c")
+        .file("src/playback/ffmpeg/mp4.c")
+        .file("src/playback/ffmpeg/transcoder.c")
         .include(&ffmpeg.include)
         .flag("-Wno-deprecated-declarations")
         .compile("mana_ffmpeg");

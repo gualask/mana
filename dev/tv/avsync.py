@@ -85,15 +85,15 @@ def main():
         beep = beep_near(envelope, step, flash, args.threshold)
         if beep is not None:
             offsets.append((beep - flash) * 1000)
-    print(f'video {fps:.0f} fps (risoluzione ±{500 / fps:.0f} ms) · lampi {len(flashes)} · con bip {len(offsets)}')
+    print(f'video {fps:.0f} fps (resolution ±{500 / fps:.0f} ms) · flashes {len(flashes)} · with a beep {len(offsets)}')
     if not offsets:
-        raise SystemExit('nessuna coppia lampo/bip trovata')
-    print('scarti (ms, positivo = audio in ritardo): ' + ' '.join(f'{o:+.0f}' for o in offsets))
+        raise SystemExit('no flash and beep pair found')
+    print('offsets (ms, positive = audio late): ' + ' '.join(f'{o:+.0f}' for o in offsets))
     median = statistics.median(offsets)
     kept = [o for o in offsets if abs(o - median) <= OUTLIER_MS]
     spread = statistics.stdev(kept) if len(kept) > 1 else 0
-    print(f'mediana {median:+.0f} ms · media {statistics.mean(kept):+.0f} ms · deviazione {spread:.0f} ms '
-          f'· scartati {len(offsets) - len(kept)} (oltre {OUTLIER_MS} ms dalla mediana: rumori)')
+    print(f'median {median:+.0f} ms · mean {statistics.mean(kept):+.0f} ms · deviation {spread:.0f} ms '
+          f'· {len(offsets) - len(kept)} dropped (over {OUTLIER_MS} ms from the median: noise)')
 
 if __name__ == '__main__':
     main()

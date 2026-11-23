@@ -6,7 +6,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::Read as _;
 use std::path::Path;
 
-use super::Input;
+use super::{DemuxError, Input};
 
 const READ_EOF: c_int = 0;
 const READ_VIDEO: c_int = 1;
@@ -25,6 +25,10 @@ pub const CODEC_AC3: i32 = 6;
 pub const CODEC_EAC3: i32 = 7;
 const NO_AUDIO: i32 = -1;
 const NO_VIDEO: i32 = -1;
+// Mirror MANA_STEP_* in the shim; any other step is opening the input.
+const STEP_STREAM_INFO: c_int = 2;
+const STEP_ANNEXB: c_int = 3;
+const STEP_AAC_CONFIG: c_int = 4;
 
 /// Mirrors `mana_info`.
 #[repr(C)]
@@ -42,25 +46,51 @@ impl Info {
         self.audio_codec != NO_AUDIO
     }
 
+    /// The video as FFmpeg names its codec, with its size; none when the
+    /// stream has no video.
+    pub fn video(&self) -> Option<String> {
+        (self.video_codec != NO_VIDEO).then(|| format!("{} {}×{}", name(&self.video_name), self.width, self.height))
+    }
+
+    /// For the log: the video and the audio.
     pub fn describe(&self) -> String {
         format!("{} · {}", self.describe_video(), self.describe_audio())
     }
 
+    /// For the log.
     pub fn describe_video(&self) -> String {
-        if self.video_codec == NO_VIDEO {
-            return "nessun video".into();
-        }
-        format!("{} {}×{}", name(&self.video_name), self.width, self.height)
+        self.video().unwrap_or_else(|| "no video".into())
     }
 
+    /// For the log.
     pub fn describe_audio(&self) -> String {
-        if self.has_audio() { name(&self.audio_name) } else { "nessun audio".into() }
+        if self.has_audio() { name(&self.audio_name) } else { "no audio".into() }
     }
 }
 
 fn name(raw: &[c_char; 32]) -> String {
     // SAFETY: the shim writes NUL-terminated names with snprintf.
     unsafe { CStr::from_ptr(raw.as_ptr()) }.to_string_lossy().into_owned()
+}
+
+/// Mirrors `mana_error`.
+#[repr(C)]
+#[derive(Default)]
+struct RawError {
+    step: c_int,
+    code: c_int,
+}
+
+impl RawError {
+    fn error(&self) -> DemuxError {
+        let detail = || error_text(self.code);
+        match self.step {
+            STEP_STREAM_INFO => DemuxError::StreamInfo(detail()),
+            STEP_ANNEXB => DemuxError::AnnexB(detail()),
+            STEP_AAC_CONFIG => DemuxError::AacConfig,
+            _ => DemuxError::Open(detail()),
+        }
+    }
 }
 
 /// Mirrors `mana_packet`.
@@ -74,13 +104,12 @@ struct RawPacket {
 }
 
 unsafe extern "C" {
-    fn mana_media_open(url: *const c_char, info: *mut Info, err: *mut c_char, err_size: c_int) -> *mut c_void;
+    fn mana_media_open(url: *const c_char, info: *mut Info, err: *mut RawError) -> *mut c_void;
     fn mana_media_open_stream(
         read: unsafe extern "C" fn(*mut c_void, *mut u8, c_int) -> c_int,
         opaque: *mut c_void,
         info: *mut Info,
-        err: *mut c_char,
-        err_size: c_int,
+        err: *mut RawError,
     ) -> *mut c_void;
     fn mana_media_read(media: *mut c_void, out: *mut RawPacket) -> c_int;
     fn mana_media_rewind(media: *mut c_void) -> c_int;
@@ -109,23 +138,22 @@ pub struct Media {
 unsafe impl Send for Media {}
 
 impl Media {
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let url = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+    pub fn open(path: &Path) -> Result<Self, DemuxError> {
+        let url = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| DemuxError::Open(e.to_string()))?;
         // SAFETY: Info is plain data; the shim zeroes and fills it.
         let mut info: Info = unsafe { std::mem::zeroed() };
-        let mut err = [0 as c_char; 256];
+        let mut err = RawError::default();
         // SAFETY: all pointers are valid for the duration of the call.
-        let raw = unsafe { mana_media_open(url.as_ptr(), &mut info, err.as_mut_ptr(), err.len() as c_int) };
+        let raw = unsafe { mana_media_open(url.as_ptr(), &mut info, &mut err) };
         if raw.is_null() {
-            // SAFETY: the shim NUL-terminates `err` on failure.
-            return Err(unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy().into_owned());
+            return Err(err.error());
         }
         Ok(Self { raw, info, stream: None })
     }
 
     /// Demuxes an MPEG-TS or fragmented MP4 byte stream, one section at a
     /// time (see `next_section`).
-    pub fn open_stream(stream: Box<dyn Input>) -> Result<Self, String> {
+    pub fn open_stream(stream: Box<dyn Input>) -> Result<Self, DemuxError> {
         let mut stream = Box::new(stream);
         let (raw, info) = open_section(&mut stream)?;
         Ok(Self { raw, info, stream: Some(stream) })
@@ -139,7 +167,7 @@ impl Media {
     /// After `read` returned end of file: when the stream continues with a
     /// new section, reopens the demuxer on it, with the section's own
     /// streams and formats in `info`, and returns true.
-    pub fn next_section(&mut self) -> Result<bool, String> {
+    pub fn next_section(&mut self) -> Result<bool, DemuxError> {
         let Some(stream) = self.stream.as_mut() else { return Ok(false) };
         if !stream.next_section() {
             return Ok(false);
@@ -152,7 +180,7 @@ impl Media {
     }
 
     /// The returned data is valid until the next call on this `Media`.
-    pub fn read(&mut self) -> Result<Read<'_>, String> {
+    pub fn read(&mut self) -> Result<Read<'_>, DemuxError> {
         let mut packet = RawPacket { data: std::ptr::null(), size: 0, keyframe: 0, pts_us: 0, dts_us: 0 };
         // SAFETY: `raw` is a live handle; `packet` is filled by the shim.
         let kind = unsafe { mana_media_read(self.raw, &mut packet) };
@@ -171,14 +199,14 @@ impl Media {
             }),
             READ_AUDIO => Ok(Read::Audio { data: data(), pts_us: timestamp(packet.pts_us) }),
             READ_EOF => Ok(Read::Eof),
-            code => Err(error_text(code)),
+            code => Err(DemuxError::Read(error_text(code))),
         }
     }
 
-    pub fn rewind(&mut self) -> Result<(), String> {
+    pub fn rewind(&mut self) -> Result<(), DemuxError> {
         // SAFETY: `raw` is a live handle.
         let code = unsafe { mana_media_rewind(self.raw) };
-        if code < 0 { Err(error_text(code)) } else { Ok(()) }
+        if code < 0 { Err(DemuxError::Rewind(error_text(code))) } else { Ok(()) }
     }
 }
 
@@ -194,17 +222,16 @@ impl Drop for Media {
 }
 
 /// Opens the shim on the stream's current section.
-fn open_section(stream: &mut Box<Box<dyn Input>>) -> Result<(*mut c_void, Info), String> {
+fn open_section(stream: &mut Box<Box<dyn Input>>) -> Result<(*mut c_void, Info), DemuxError> {
     // SAFETY: as in `Media::open`.
     let mut info: Info = unsafe { std::mem::zeroed() };
-    let mut err = [0 as c_char; 256];
+    let mut err = RawError::default();
     let opaque = (&mut **stream as *mut Box<dyn Input>).cast::<c_void>();
     // SAFETY: `opaque` points into the outer box, which stays in the Media
     // and outlives the shim handle (closed first in Drop and on reopening).
-    let raw = unsafe { mana_media_open_stream(read_stream, opaque, &mut info, err.as_mut_ptr(), err.len() as c_int) };
+    let raw = unsafe { mana_media_open_stream(read_stream, opaque, &mut info, &mut err) };
     if raw.is_null() {
-        // SAFETY: the shim NUL-terminates `err` on failure.
-        return Err(unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy().into_owned());
+        return Err(err.error());
     }
     Ok((raw, info))
 }
@@ -222,11 +249,12 @@ unsafe extern "C" fn read_stream(opaque: *mut c_void, buf: *mut u8, size: c_int)
     }
 }
 
+/// What FFmpeg says of `code`, with the code.
 fn error_text(code: c_int) -> String {
     let mut text = [0 as c_char; 128];
     // SAFETY: av_strerror writes a NUL-terminated string into the buffer.
     unsafe {
         mana_error_text(code, text.as_mut_ptr(), text.len() as c_int);
-        format!("FFmpeg {code}: {}", CStr::from_ptr(text.as_ptr()).to_string_lossy())
+        format!("{} ({code})", CStr::from_ptr(text.as_ptr()).to_string_lossy())
     }
 }

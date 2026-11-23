@@ -21,7 +21,7 @@ Full copies of documents that cannot be redistributed are in
   native apps are built, system libraries from webOS 6 onwards, remote and
   Magic Remote pointer.
 - [Performance](performance.md): compositor and redraw, feeding data to
-  Starfish, TLS and AES decryption on 32-bit ARM.
+  Starfish, TLS and AES decryption on 32-bit ARM, memory of the process.
 
 ## Platform and format documentation
 

@@ -120,7 +120,7 @@ impl Read for HlsStream {
                 return Ok(0);
             }
             if self.stop.is_set() {
-                return Err(std::io::Error::other("fermato"));
+                return Err(std::io::Error::other("stopped"));
             }
             match self.queue.recv_timeout(POLL) {
                 Ok(Chunk::Bytes(segment)) => (self.current, self.position) = (segment, 0),

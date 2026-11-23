@@ -2,7 +2,9 @@
 //! home screen, moved with the remote while playback goes on; thousands of
 //! made-up ones for the interface test.
 
-use mana_core::catalog::Channel;
+use mana_core::catalog::{Channel, ChannelError};
+use mana_core::language::{Language, Localized};
+use mana_core::text;
 
 use super::gfx::{Color, Renderer};
 use super::hits::{Hits, Target};
@@ -15,13 +17,12 @@ const VISIBLE_ROWS: usize = 12;
 pub const PAGE: isize = 10;
 /// Rows beyond the visible ones whose logos are fetched ahead, each way.
 const PREFETCH_ROWS: usize = 2 * PAGE as usize;
-const GENRES: [&str; 6] = ["Notizie", "Sport", "Cinema", "Musica", "Ragazzi", "Documentari"];
+/// Made-up genres, as data: not translated.
+const GENRES: [&str; 6] = ["News", "Sport", "Cinema", "Music", "Kids", "Documentaries"];
 
 const LOGO_BOX: Color = Color::hex(0x252b3b);
 /// A logo's box in a row, in 1080p pixels.
 pub const LOGO_SIZE: (f32, f32) = (92.0, 48.0);
-/// Why a made-up channel does not play.
-const SYNTHETIC: &str = "canale finto della prova dell'interfaccia";
 
 pub struct ChannelList {
     channels: Vec<Channel>,
@@ -30,18 +31,18 @@ pub struct ChannelList {
     /// pointer moves it within the rows shown, which stay put under it.
     first: usize,
     /// Why the focused channel did not play, until the focus moves.
-    notice: Option<String>,
+    notice: Option<ChannelError>,
 }
 
 impl ChannelList {
-    /// `count` made-up channels, without logos.
+    /// `count` made-up channels, without logos or a stream.
     pub fn synthetic(count: usize) -> Self {
         let channels = (0..count)
             .map(|i| Channel {
-                name: format!("{:04}  {} {} HD", i + 1, GENRES[i % GENRES.len()], i / 6 + 1),
+                name: Some(format!("{:04}  {} {} HD", i + 1, GENRES[i % GENRES.len()], i / 6 + 1)),
                 logo: None,
                 group: None,
-                play: Err(SYNTHETIC.into()),
+                play: Err(ChannelError::NoStream),
             })
             .collect();
         Self::new(channels)
@@ -54,7 +55,7 @@ impl ChannelList {
     /// Shows `channels` instead, the focus kept on the channel of the same
     /// name if it is still there, else on the first.
     pub fn replace(&mut self, channels: Vec<Channel>) {
-        let focused = self.focused().map(|c| c.name.clone());
+        let focused = self.focused().and_then(|c| c.name.clone());
         self.channels = channels;
         self.notice = None;
         self.set_focus(focused.and_then(|name| self.position(&name)).unwrap_or(0));
@@ -65,7 +66,7 @@ impl ChannelList {
     }
 
     /// Shows why the focused channel does not play, until the focus moves.
-    pub fn notice(&mut self, reason: String) {
+    pub fn notice(&mut self, reason: ChannelError) {
         self.notice = Some(reason);
     }
 
@@ -93,7 +94,7 @@ impl ChannelList {
 
     /// Where the channel named `name` is in the list.
     pub fn position(&self, name: &str) -> Option<usize> {
-        self.channels.iter().position(|c| c.name == name)
+        self.channels.iter().position(|c| c.name.as_deref() == Some(name))
     }
 
     pub fn with_logos(&self) -> usize {
@@ -118,11 +119,12 @@ impl ChannelList {
     /// visible rows, then of the rows around them; records the rows in `hits`.
     /// A channel that cannot be played is dimmed; the reason it did not,
     /// once asked, shows under the rows.
-    pub fn draw(&self, r: &mut Renderer, t: &mut Text, logos: &mut Logos, s: f32, hits: &mut Hits) {
+    pub fn draw(&self, r: &mut Renderer, t: &mut Text, logos: &mut Logos, s: f32, hits: &mut Hits, language: Language) {
         let (x, y, w, row) = (60.0 * s, 120.0 * s, 720.0 * s, 64.0 * s);
         let notice_height = if self.notice.is_some() { 56.0 } else { 0.0 };
         r.rect(x, y, w, (VISIBLE_ROWS as f32 * 64.0 + 120.0 + notice_height) * s, PANEL.with_alpha(0.85));
-        let header = format!("Canali · {} di {}", self.focus + 1, self.channels.len());
+        let (focus, count) = (self.focus + 1, self.channels.len());
+        let header = text!(language, "channels-header", focus = focus, count = count);
         t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &header);
         let first = self.first;
         let with_logos = self.channels.iter().any(|c| c.logo.is_some());
@@ -139,11 +141,11 @@ impl ChannelList {
                 draw_logo(r, logos, logo, x + 28.0 * s, top + 5.0 * s, s);
             }
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
-            t.draw(r, text_x, top + 12.0 * s, 32.0 * s, colour, &channel.name);
+            t.draw(r, text_x, top + 12.0 * s, 32.0 * s, colour, &channel.title(language));
         }
         if let Some(notice) = &self.notice {
             let top = y + 90.0 * s + VISIBLE_ROWS as f32 * row + 10.0 * s;
-            t.draw(r, x + 30.0 * s, top, 26.0 * s, ERROR, notice);
+            t.draw(r, x + 30.0 * s, top, 26.0 * s, ERROR, &notice.text(language));
         }
         if with_logos {
             self.want_logos(logos);

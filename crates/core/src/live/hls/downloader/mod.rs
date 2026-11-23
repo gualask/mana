@@ -11,13 +11,13 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use super::ladder::Ladder;
-use super::playlist::{self, MediaPlaylist, Segment, text};
+use super::playlist::{MediaPlaylist, Segment, text};
 use super::progress::{Progress, reload_wait, stuck};
 use super::segment::{self, Segments};
 use super::stream::{Chunk, POLL, Stop};
 use crate::live::Interruption;
 use crate::log::{debug, log};
-use crate::net::Client;
+use crate::net::{self, Client};
 use failure::Failures;
 pub(super) use failure::Failure;
 
@@ -145,7 +145,7 @@ impl Downloader {
             Ok(None) => return Ok(Sent::Gone),
             // Even one this client cannot read: the next may be fine.
             Err(error) => {
-                log!("hls: segmento {} saltato: {}", segment.sequence, error.message());
+                log!("hls: segment {} skipped: {}", segment.sequence, error.cause());
                 progress.next = Some(segment.sequence + 1);
                 return Ok(Sent::Skipped);
             }
@@ -153,7 +153,7 @@ impl Downloader {
         // The opening waits for the whole first segment: what a slow start
         // spends, on a slow network, goes there.
         if !progress.sent_segment {
-            log!("{}: primo segmento, {} KB in {} ms", self.label, data.len() / 1024, started.elapsed().as_millis());
+            log!("{}: first segment, {} KB in {} ms", self.label, data.len() / 1024, started.elapsed().as_millis());
         }
         if sender.send(Chunk::Bytes(data)).is_err() {
             return Ok(Sent::Gone); // the demuxer is gone
@@ -186,7 +186,7 @@ impl Downloader {
     fn count_sent(&self, segment: &Segment, progress: &mut Progress) {
         progress.sent_segment = true;
         if segment.discontinuity {
-            debug!("hls: discontinuità al segmento {}", segment.sequence);
+            debug!("hls: discontinuity at segment {}", segment.sequence);
         }
         progress.next = Some(segment.sequence + 1);
     }
@@ -197,7 +197,7 @@ impl Downloader {
     fn send_init(&mut self, init: &Url, changed: bool, segment: &Segment, sender: &SyncSender<Chunk>, stop: &Stop) -> Result<bool, Failure> {
         let Some(data) = self.retry(stop, None, |d| Ok(d.client.get(init, segment::MAX_BYTES)?))? else { return Ok(false) };
         if changed {
-            log!("hls: nuova sezione di inizializzazione al segmento {}", segment.sequence);
+            log!("hls: new initialization section at segment {}", segment.sequence);
         }
         Ok(sender.send(Chunk::Bytes(data)).is_ok())
     }
@@ -231,7 +231,7 @@ impl Downloader {
                 // again.
                 Err(Failure::Refused(error)) => return Err(Failure::Refused(error)),
                 Err(failure) => {
-                    failures.count(failure.message())?;
+                    failures.count(failure.cause())?;
                     std::thread::sleep(RETRY_DELAY);
                 }
             }
@@ -245,7 +245,7 @@ impl Downloader {
 
 impl Downloader {
     fn media_playlist(&mut self, url: &Url) -> Result<MediaPlaylist, Failure> {
-        let (served, body) = self.client.get_with_final_url(url, playlist::MAX_BYTES)?;
+        let (served, body) = self.client.get_with_final_url(url, net::MAX_TEXT_BYTES)?;
         Ok(MediaPlaylist::parse(&text(body)?, &served)?)
     }
 

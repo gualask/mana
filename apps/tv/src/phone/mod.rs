@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mana_core::catalog::update::list_url;
+use mana_core::language::{Language, Localized};
 use mana_core::log::log;
+use mana_core::text;
 use url::Url;
 
 use http::Method;
@@ -28,7 +30,7 @@ const PORTS_TRIED: u16 = 10;
 const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH: usize = 4;
 /// How long a connection may stay silent: a browser opens one ahead and
-/// sends on it only when «Salva» is pressed.
+/// sends on it only when «Save» is pressed.
 const IO_TIMEOUT: Duration = Duration::from_secs(30);
 /// The most connections served at once: a phone opens two or three.
 const MAX_CONNECTIONS: usize = 8;
@@ -62,10 +64,12 @@ pub struct Server {
     stop: Arc<AtomicBool>,
 }
 
-/// What every connection serves: the page at `path`, with the URL in use.
+/// What every connection serves: the page at `path`, with the URL in use,
+/// in the app's language.
 struct Site {
     path: String,
     current: Mutex<Option<String>>,
+    language: Mutex<Language>,
     requests: Sender<Request>,
 }
 
@@ -73,29 +77,53 @@ impl Site {
     fn current(&self) -> Option<String> {
         self.current.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
+
+    fn language(&self) -> Language {
+        *self.language.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Why the page cannot be served.
+pub enum StartError {
+    NoNetwork,
+    /// No port free from FIRST_PORT on.
+    NoFreePort,
+    /// What the system says.
+    System(String),
+}
+
+impl Localized for StartError {
+    fn text(&self, language: Language) -> String {
+        let last = FIRST_PORT + PORTS_TRIED - 1;
+        match self {
+            Self::NoNetwork => text!(language, "phone-no-network"),
+            Self::NoFreePort => text!(language, "phone-no-free-port", first = FIRST_PORT, last = last),
+            Self::System(detail) => detail.clone(),
+        }
+    }
 }
 
 impl Server {
-    /// Listens on the TV's address on the local network, at a new code;
-    /// why not, if it cannot.
-    pub fn start() -> Result<Self, String> {
-        let ip = local_ip().ok_or("Nessuna rete: collega la TV")?;
-        let listener = bind(ip)?;
-        let local = listener.local_addr().map_err(|e| e.to_string())?;
+    /// Listens on the TV's address on the local network, at a new code,
+    /// serving the page in `language`; why not, if it cannot.
+    pub fn start(language: Language) -> Result<Self, StartError> {
+        let ip = local_ip().ok_or(StartError::NoNetwork)?;
+        let listener = bind(ip).ok_or(StartError::NoFreePort)?;
+        let local = listener.local_addr().map_err(|e| StartError::System(e.to_string()))?;
         let path = format!("/{}", code());
         let address = format!("http://{local}{path}");
         let (sender, requests) = channel();
-        let site = Arc::new(Site { path, current: Mutex::new(None), requests: sender });
+        let site = Arc::new(Site { path, current: Mutex::new(None), language: Mutex::new(language), requests: sender });
         let stop = Arc::new(AtomicBool::new(false));
         std::thread::Builder::new()
-            .name("telefono".into())
+            .name("phone".into())
             .spawn({
                 let (site, stop) = (site.clone(), stop.clone());
                 move || listen(&listener, &site, &stop)
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| StartError::System(e.to_string()))?;
         // Without the code, which alone keeps the page from others.
-        log!("telefono: pagina su http://{local}/…");
+        log!("phone: page on http://{local}/…");
         Ok(Self { address, local, requests, site, stop })
     }
 
@@ -113,6 +141,11 @@ impl Server {
     pub fn set_current(&self, url: Option<&Url>) {
         *self.site.current.lock().unwrap_or_else(|e| e.into_inner()) = url.map(|u| u.to_string());
     }
+
+    /// The language of the page from the next request.
+    pub fn set_language(&self, language: Language) {
+        *self.site.language.lock().unwrap_or_else(|e| e.into_inner()) = language;
+    }
 }
 
 impl Drop for Server {
@@ -121,7 +154,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         drop(TcpStream::connect_timeout(&self.local, Duration::from_millis(200)));
-        log!("telefono: pagina chiusa");
+        log!("phone: page closed");
     }
 }
 
@@ -136,12 +169,12 @@ fn listen(listener: &TcpListener, site: &Arc<Site>, stop: &AtomicBool) {
         let Ok(stream) = stream else { continue };
         let Some(slot) = Slot::take(&open) else { continue };
         let site = site.clone();
-        let spawned = std::thread::Builder::new().name("telefono-connessione".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("phone-connection".into()).spawn(move || {
             serve(stream, &site);
             drop(slot);
         });
         if let Err(error) = spawned {
-            log!("telefono: connessione non servita: {error}");
+            log!("phone: connection not served: {error}");
         }
     }
 }
@@ -175,7 +208,7 @@ fn serve(mut stream: TcpStream, site: &Site) {
         Err(refused) => (refused.status(), String::new()),
     };
     if let Err(error) = http::respond(&mut stream, status, &body) {
-        log!("telefono: risposta non inviata: {error}");
+        log!("phone: answer not sent: {error}");
     }
 }
 
@@ -185,7 +218,7 @@ fn answer(request: &http::Request, site: &Site) -> (u16, String) {
         return (404, String::new());
     }
     match request.method {
-        Method::Get => (200, page::page(&site.path, site.current().as_deref(), Notice::None)),
+        Method::Get => (200, page::page(&site.path, site.current().as_deref(), Notice::None, site.language())),
         Method::Post => {
             let sent = http::form_value(&request.body, "url").unwrap_or_default();
             (200, posted(site, &sent))
@@ -193,32 +226,37 @@ fn answer(request: &http::Request, site: &Site) -> (u16, String) {
     }
 }
 
-/// The page after «Salva»: what the TV did with the URL `sent`.
+/// The page after «Save»: what the TV did with the URL `sent`.
 fn posted(site: &Site, sent: &str) -> String {
-    let path = site.path.as_str();
-    let refused = |text: String| page::page(path, site.current().as_deref(), Notice::Refused { text: &text, sent });
+    let (path, language) = (site.path.as_str(), site.language());
+    let refused = |text: String| page::page(path, site.current().as_deref(), Notice::Refused { text: &text, sent }, language);
     let url = match list_url(sent) {
         Ok(url) => url,
-        Err(reason) => return refused(format!("Non salvata: {reason}. La TV tiene la lista di prima.")),
+        Err(reason) => {
+            let reason = reason.text(language);
+            return refused(text!(language, "notice-not-saved", reason = reason));
+        }
     };
     let in_use = url.to_string();
     let (reply, replies) = channel();
     if site.requests.send(Request { url, reply }).is_err() {
-        return refused("Impostazioni chiuse sulla TV.".into());
+        return refused(text!(language, "phone-settings-closed"));
     }
     match replies.recv_timeout(REPLY_TIMEOUT) {
-        Ok(Reply { saved: true, text }) => page::page(path, Some(&in_use), Notice::Saved(&text)),
+        Ok(Reply { saved: true, text }) => page::page(path, Some(&in_use), Notice::Saved(&text), language),
         Ok(Reply { saved: false, text }) => refused(text),
-        Err(RecvTimeoutError::Timeout) => refused("La TV sta ancora scaricando la lista: guarda la TV.".into()),
-        Err(RecvTimeoutError::Disconnected) => refused("Impostazioni chiuse sulla TV: guarda la TV per l'esito.".into()),
+        Err(RecvTimeoutError::Timeout) => refused(
+            text!(language, "phone-still-downloading"),
+        ),
+        Err(RecvTimeoutError::Disconnected) => refused(
+            text!(language, "phone-closed-meanwhile"),
+        ),
     }
 }
 
 /// A port of `ip`: the first one free from FIRST_PORT.
-fn bind(ip: IpAddr) -> Result<TcpListener, String> {
-    (FIRST_PORT..FIRST_PORT + PORTS_TRIED)
-        .find_map(|port| TcpListener::bind((ip, port)).ok())
-        .ok_or_else(|| format!("nessuna porta libera tra {FIRST_PORT} e {}", FIRST_PORT + PORTS_TRIED - 1))
+fn bind(ip: IpAddr) -> Option<TcpListener> {
+    (FIRST_PORT..FIRST_PORT + PORTS_TRIED).find_map(|port| TcpListener::bind((ip, port)).ok())
 }
 
 /// The TV's address on the local network: the one a datagram to the

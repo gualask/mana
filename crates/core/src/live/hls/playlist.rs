@@ -6,8 +6,12 @@ use std::time::Duration;
 
 use url::Url;
 
+mod date;
+mod error;
 mod master;
 
+use date::parse_date;
+pub use error::{Error, Invalid, Unsupported};
 pub use master::{Variant, parse_master};
 
 /// How far behind the live edge playback starts, in target durations: the
@@ -16,28 +20,9 @@ pub use master::{Variant, parse_master};
 /// video and audio playlists start together even when their segments
 /// differ in length.
 const LIVE_EDGE_TARGETS: u32 = 3;
-/// What a playlist may unpack to: RaiPlay's are 242 KB, a two-hour window
-/// of 2 s segments is about 0.6 MB. The JSON a recipe reads is of the same
-/// order.
-pub(super) const MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// The shortest target duration: a lower one, zero included, would have
 /// the playlist reloaded without pause (hls.js reads it as 1 s too).
 const MIN_TARGET_DURATION: Duration = Duration::from_secs(1);
-/// Why a playlist could not be read.
-#[derive(Debug)]
-pub enum Error {
-    /// Not a playlist, or a damaged one: a later download may do better.
-    Invalid(String),
-    /// HLS features this client does not have.
-    Unsupported(String),
-}
-
-impl From<url::ParseError> for Error {
-    fn from(error: url::ParseError) -> Self {
-        Self::Invalid(error.to_string())
-    }
-}
-
 pub struct MediaPlaylist {
     /// At least MIN_TARGET_DURATION.
     pub target_duration: Duration,
@@ -114,7 +99,7 @@ impl MediaPlaylist {
         } else if let Some(value) = line.strip_prefix("#EXT-X-MAP:") {
             next.init = Some(parse_map(value, base)?);
         } else if line.starts_with("#EXT-X-BYTERANGE:") {
-            return Err(Error::Unsupported("segmenti con BYTERANGE".into()));
+            return Err(Error::Unsupported(Unsupported::ByteRange));
         } else if let Some(value) = line.strip_prefix("#EXTINF:") {
             next.duration = seconds(value.split(',').next().unwrap_or_default())?;
         } else if line == "#EXT-X-DISCONTINUITY" {
@@ -178,9 +163,9 @@ fn check_playlist(text: &str) -> Result<(), Error> {
     if is_playlist(text.as_bytes()) {
         Ok(())
     } else if text.contains("<MPD") {
-        Err(Error::Unsupported("manifest DASH".into()))
+        Err(Error::Unsupported(Unsupported::Dash))
     } else {
-        Err(Error::Invalid("playlist non valida".into()))
+        Err(Error::Invalid(Invalid::NotPlaylist))
     }
 }
 
@@ -188,15 +173,15 @@ fn check_playlist(text: &str) -> Result<(), Error> {
 fn parse_map(attributes: &str, base: &Url) -> Result<Url, Error> {
     let map = parse_attributes(attributes);
     if map.contains_key("BYTERANGE") {
-        return Err(Error::Unsupported("sezione di inizializzazione con BYTERANGE".into()));
+        return Err(Error::Unsupported(Unsupported::MapByteRange));
     }
-    let uri = map.get("URI").ok_or_else(|| Error::Invalid("EXT-X-MAP senza URI".into()))?;
+    let uri = map.get("URI").ok_or(Error::Invalid(Invalid::MapWithoutUri))?;
     Ok(base.join(uri)?)
 }
 
 /// A media or discontinuity sequence number.
 fn sequence(value: &str) -> Result<u64, Error> {
-    value.parse().map_err(|_| Error::Invalid(format!("sequenza non valida: {value}")))
+    value.parse().map_err(|_| Error::Invalid(Invalid::Sequence(value.into())))
 }
 
 /// A duration in seconds (RFC 8216 §4.3.2.1, §4.3.3.1: a decimal integer
@@ -209,48 +194,7 @@ fn seconds(value: &str) -> Result<Duration, Error> {
         .parse()
         .ok()
         .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
-        .ok_or_else(|| Error::Invalid(format!("durata non valida: {value}")))
-}
-
-/// An RFC 3339 date and time (RFC 8216 §4.3.2.6), `2026-11-21T10:00:00.5Z`
-/// or with an offset as `+01:00`, in seconds since the Unix epoch.
-fn parse_date(text: &str) -> Option<f64> {
-    let (day, time) = text.trim().split_once(['T', 't'])?;
-    let mut day = day.splitn(3, '-').map(|n| n.parse::<i64>().ok());
-    let (year, month, date) = (day.next()??, day.next()??, day.next()??);
-    let (clock, offset) = split_offset(time)?;
-    let mut clock = clock.splitn(3, ':');
-    let (hour, minute) = (clock.next()?.parse::<i64>().ok()?, clock.next()?.parse::<i64>().ok()?);
-    let second = clock.next()?.parse::<f64>().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&date) || hour > 23 || minute > 59 || !(0.0..61.0).contains(&second) {
-        return None;
-    }
-    let days = days_since_epoch(year, month, date);
-    Some((days * 86_400 + hour * 3_600 + minute * 60) as f64 + second - offset)
-}
-
-/// The clock of an RFC 3339 time and its offset from UTC, in seconds: `Z`,
-/// or `+01:00`, `-0030`.
-fn split_offset(time: &str) -> Option<(&str, f64)> {
-    if let Some(clock) = time.strip_suffix(['Z', 'z']) {
-        return Some((clock, 0.0));
-    }
-    let at = time.rfind(['+', '-'])?;
-    let digits = time[at + 1..].replace(':', "");
-    if digits.len() != 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let offset = (digits[..2].parse::<f64>().ok()? * 60.0 + digits[2..].parse::<f64>().ok()?) * 60.0;
-    Some((&time[..at], if time[at..].starts_with('-') { -offset } else { offset }))
-}
-
-/// Days from 1970-01-01 in the proleptic Gregorian calendar (H. Hinnant).
-fn days_since_epoch(year: i64, month: i64, date: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let of_era = year.rem_euclid(400);
-    let of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + date - 1;
-    era * 146_097 + of_era * 365 + of_era / 4 - of_era / 100 + of_year - 719_468
+        .ok_or_else(|| Error::Invalid(Invalid::Duration(value.into())))
 }
 
 fn parse_key(attributes: &str, base: &Url) -> Result<Option<Key>, Error> {
@@ -258,18 +202,18 @@ fn parse_key(attributes: &str, base: &Url) -> Result<Option<Key>, Error> {
     match attributes.get("METHOD").map(String::as_str) {
         Some("NONE") => Ok(None),
         Some("AES-128") => {
-            let uri = attributes.get("URI").ok_or_else(|| Error::Invalid("chiave senza URI".into()))?;
+            let uri = attributes.get("URI").ok_or(Error::Invalid(Invalid::KeyWithoutUri))?;
             let iv = match attributes.get("IV") {
                 Some(hex) => {
                     let hex = hex.trim_start_matches("0x").trim_start_matches("0X");
-                    let value = u128::from_str_radix(hex, 16).map_err(|_| Error::Invalid(format!("IV non valido: {hex}")))?;
+                    let value = u128::from_str_radix(hex, 16).map_err(|_| Error::Invalid(Invalid::Iv(hex.into())))?;
                     Some(value.to_be_bytes())
                 }
                 None => None,
             };
             Ok(Some(Key { url: base.join(uri)?, iv }))
         }
-        other => Err(Error::Unsupported(format!("cifratura {other:?}"))),
+        other => Err(Error::Unsupported(Unsupported::Encryption(other.unwrap_or("?").into()))),
     }
 }
 
@@ -292,7 +236,7 @@ fn parse_attributes(text: &str) -> HashMap<String, String> {
 }
 
 pub fn text(body: Vec<u8>) -> Result<String, Error> {
-    String::from_utf8(body).map_err(|_| Error::Invalid("playlist non UTF-8".into()))
+    String::from_utf8(body).map_err(|_| Error::Invalid(Invalid::NotUtf8))
 }
 
 #[cfg(test)]

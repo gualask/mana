@@ -18,10 +18,10 @@ use std::time::{Duration, Instant};
 use crate::live::QualityChoice;
 use crate::live::source::Source;
 use crate::log::log;
-use crate::playback::{OpenBackend, Settings};
+use crate::playback::{BackendError, OpenBackend, Settings};
 pub use crate::live::Quality;
 pub use crate::live::source::EXTENSION as STREAM_EXTENSION;
-pub use stats::{State, Stats};
+pub use stats::{Failure, State, Stats};
 use stats::Shared;
 
 /// What a viewing plays.
@@ -58,21 +58,21 @@ impl Session {
 
     /// Plays `program`, shown as `name`, after stopping what was playing;
     /// returns at once.
-    pub fn play(&mut self, name: String, program: Program, settings: Settings) -> Result<(), String> {
+    pub fn play(&mut self, name: String, program: Program, settings: Settings) -> Result<(), Failure> {
         self.stop();
         let stop = Arc::new(AtomicBool::new(false));
         let shared = Arc::new(Shared::default());
         let (thread_stop, thread_shared) = (stop.clone(), shared.clone());
         let (open, turn) = (self.open.clone(), self.turn.clone());
         let quality = self.quality.clone();
-        log!("riproduzione {name} con {settings:?}, qualità {}", quality.get());
+        log!("playing {name} with {settings:?}, quality {}", quality.get());
         let thread = std::thread::Builder::new()
             .name("feeder".into())
             .spawn(move || {
                 let in_turn = InTurn::new(turn);
                 watch(&program, &settings, &in_turn.opener(open, &thread_stop), &thread_stop, &thread_shared, &quality);
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Failure::Thread(e.to_string()))?;
         self.viewing = Some(Viewing { name, stop, shared, thread });
         Ok(())
     }
@@ -115,7 +115,7 @@ impl Session {
     /// from, and the quality, are in the viewing's stats.
     pub fn set_quality(&self, quality: Quality) {
         if quality != self.quality.get() {
-            log!("qualità {quality}");
+            log!("quality {quality}");
         }
         self.quality.set(quality);
     }
@@ -177,7 +177,7 @@ impl InTurn {
         let (turn, stop, holds) = (self.turn.clone(), stop.clone(), self.holds.clone());
         Arc::new(move || {
             if !holds.load(Ordering::Relaxed) && !turn.take(&stop) {
-                return Err("fermato prima di aprire il decoder".into());
+                return Err(BackendError::Stopped);
             }
             holds.store(true, Ordering::Relaxed);
             open()
@@ -208,9 +208,9 @@ fn watch(
     stop.store(true, Ordering::Relaxed);
     let state = match result {
         Ok(()) => State::Stopped,
-        Err(error) => State::Failed(error.to_string()),
+        Err(failure) => State::Failed(failure),
     };
-    log!("visione: {state}");
+    log!("viewing: {state}");
     *shared.ended.lock().unwrap() = Some(state);
 }
 

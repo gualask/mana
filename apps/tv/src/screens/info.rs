@@ -2,10 +2,13 @@
 //! first, shown while a viewing starts and toggled with up or down. It only
 //! reads the counters the viewing keeps anyway.
 
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
+use mana_core::language::{Language, Localized};
 use mana_core::playback::{AudioCodec, Formats, VideoCodec};
 use mana_core::session::{Quality, State, Stats};
+use mana_core::text;
 
 use super::gfx::{Color, Renderer};
 use super::text::Text;
@@ -58,15 +61,15 @@ impl InfoPanel {
     /// A band across the bottom: the channel and, right, its state and the
     /// time watched; below, the formats and, right, the quality, each as a
     /// small grey label before its value.
-    pub fn draw(&mut self, r: &mut Renderer, t: &mut Text, s: f32, stats: &Stats) {
+    pub fn draw(&mut self, r: &mut Renderer, t: &mut Text, s: f32, stats: &Stats, language: Language) {
         self.hold_while_waiting(stats);
         if !self.shown() {
             return;
         }
         let top = 928.0 * s;
         r.rect(40.0 * s, top, 1840.0 * s, 112.0 * s, BACKGROUND.with_alpha(0.8));
-        draw_top_line(r, t, s, top, stats, self.since.elapsed());
-        draw_bottom_line(r, t, s, top + 68.0 * s, stats);
+        draw_top_line(r, t, s, top, stats, self.since.elapsed(), language);
+        draw_bottom_line(r, t, s, top + 68.0 * s, stats, language);
     }
 
     /// While the viewing waits for its first frame, the panel shown at its
@@ -86,20 +89,20 @@ const RIGHT: f32 = 1848.0;
 
 /// The channel and, right, its state and the time watched, on the band's
 /// top `top`.
-fn draw_top_line(r: &mut Renderer, t: &mut Text, s: f32, top: f32, stats: &Stats, watched: Duration) {
+fn draw_top_line(r: &mut Renderer, t: &mut Text, s: f32, top: f32, stats: &Stats, watched: Duration, language: Language) {
     t.draw(r, LEFT * s, top + 14.0 * s, 38.0 * s, TEXT, &stats.name);
-    let (state, failed) = state(&stats.state);
+    let (state, failed) = state(&stats.state, language);
     let watched_left = draw_right(r, t, RIGHT * s, top + 22.0 * s, 26.0 * s, TEXT, &clock(watched));
     draw_right(r, t, watched_left - GAP * s, top + 22.0 * s, 26.0 * s, if failed { ERROR } else { MUTED }, &state);
 }
 
 /// The formats and, right, the quality, on the line at `y`.
-fn draw_bottom_line(r: &mut Renderer, t: &mut Text, s: f32, y: f32, stats: &Stats) {
+fn draw_bottom_line(r: &mut Renderer, t: &mut Text, s: f32, y: f32, stats: &Stats, language: Language) {
     let mut x = LEFT * s;
-    for field in formats(stats.playback.formats.as_ref()) {
+    for field in formats(stats.playback.formats.as_ref(), language) {
         x = field.draw(r, t, x, y, s) + GAP * s;
     }
-    if let Some(field) = quality(stats) {
+    if let Some(field) = quality(stats, language) {
         let width = field.width(r, t, s);
         field.draw(r, t, RIGHT * s - width, y, s);
     }
@@ -114,14 +117,14 @@ const VALUE_PX: f32 = 24.0;
 /// A label, then its value and, in grey, what goes with it.
 #[derive(Debug, PartialEq)]
 struct Field {
-    label: &'static str,
+    label: Cow<'static, str>,
     value: String,
     aside: Option<String>,
 }
 
 impl Field {
     fn new(label: &'static str, value: String) -> Self {
-        Self { label, value, aside: None }
+        Self { label: Cow::Borrowed(label), value, aside: None }
     }
 
     /// Draws the field from `x`, on the line starting at `y`; returns where
@@ -144,7 +147,7 @@ impl Field {
     /// The label, the value and the aside, each with its offset from the
     /// field's start, its size and its colour; and the field's width.
     fn pieces(&self, r: &mut Renderer, t: &mut Text, s: f32) -> (Vec<(f32, &str, f32, Color)>, f32) {
-        let mut pieces = vec![(self.label, LABEL_PX, MUTED), (self.value.as_str(), VALUE_PX, TEXT)];
+        let mut pieces = vec![(&*self.label, LABEL_PX, MUTED), (self.value.as_str(), VALUE_PX, TEXT)];
         pieces.extend(self.aside.as_deref().map(|aside| (aside, VALUE_PX, MUTED)));
         let (mut placed, mut end) = (Vec::new(), 0.0);
         for (i, (text, px, color)) in pieces.into_iter().enumerate() {
@@ -165,44 +168,39 @@ fn draw_right(r: &mut Renderer, t: &mut Text, right: f32, y: f32, px: f32, color
 
 /// The viewing's state as the panel says it, and whether it ended in an
 /// error.
-fn state(state: &State) -> (String, bool) {
-    match state {
-        State::Starting => ("Avvio".into(), false),
-        State::Playing => ("In riproduzione".into(), false),
-        State::Ending => ("Fine".into(), false),
-        State::Stopped => ("Fermato".into(), false),
-        State::Failed(error) => (format!("Errore: {error}"), true),
-    }
+fn state(state: &State, language: Language) -> (String, bool) {
+    (state.text(language), matches!(state, State::Failed(_)))
 }
 
 /// The video and audio the decoder plays, once known.
-fn formats(formats: Option<&Formats>) -> Vec<Field> {
+fn formats(formats: Option<&Formats>, language: Language) -> Vec<Field> {
     let Some(formats) = formats else { return Vec::new() };
     let video = match formats.video {
         VideoCodec::H264 => "H.264",
         VideoCodec::H265 => "HEVC",
     };
     let audio = match formats.audio {
-        Some(AudioCodec::Aac) => "AAC",
-        Some(AudioCodec::Ac3) => "AC-3",
-        Some(AudioCodec::Eac3) => "E-AC-3",
-        None => "nessuno",
+        Some(AudioCodec::Aac) => "AAC".into(),
+        Some(AudioCodec::Ac3) => "AC-3".into(),
+        Some(AudioCodec::Eac3) => "E-AC-3".into(),
+        None => text!(language, "info-no-audio"),
     };
     vec![
         Field::new("VIDEO", format!("{video} {}×{}", formats.width, formats.height)),
-        Field::new("AUDIO", audio.into()),
+        Field::new("AUDIO", audio),
     ]
 }
 
 /// The quality asked for and, in grey, the heights offered, when the
 /// stream offers more than one.
-fn quality(stats: &Stats) -> Option<Field> {
+fn quality(stats: &Stats, language: Language) -> Option<Field> {
     let heights = &stats.live.heights;
     if heights.len() < 2 {
         return None;
     }
     let offered: Vec<String> = heights.iter().rev().map(|&h| quality_menu::label(Quality::Lines(h))).collect();
-    Some(Field { label: "QUALITÀ", value: quality_menu::label(stats.quality), aside: Some(offered.join(" ")) })
+    let label = text!(language, "info-quality");
+    Some(Field { label: Cow::Owned(label), value: quality_menu::label(stats.quality), aside: Some(offered.join(" ")) })
 }
 
 /// `elapsed` as minutes and seconds, with the hours past the first.
@@ -215,33 +213,45 @@ fn clock(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mana_core::playback;
+    use mana_core::session::Failure;
 
     #[test]
     fn the_fields_name_the_formats_and_the_quality_only_with_variants() {
         let mut stats = Stats::default();
-        assert!(formats(None).is_empty());
+        let it = Language::Italian;
+        assert!(formats(None, it).is_empty());
         let played = Formats { video: VideoCodec::H264, width: 1920, height: 1080, audio: Some(AudioCodec::Aac) };
         assert_eq!(
-            formats(Some(&played)),
+            formats(Some(&played), it),
             [Field::new("VIDEO", "H.264 1920×1080".into()), Field::new("AUDIO", "AAC".into())]
         );
         let silent = Formats { audio: None, ..played };
-        assert_eq!(formats(Some(&silent))[1].value, "nessuno");
+        assert_eq!(formats(Some(&silent), it)[1].value, "nessuno");
+        assert_eq!(formats(Some(&silent), Language::English)[1].value, "none");
         stats.live.heights = vec![1080];
-        assert_eq!(quality(&stats), None);
+        assert_eq!(quality(&stats, it), None);
         stats.live.heights = vec![360, 720, 1080];
         stats.quality = Quality::Auto;
-        let field = quality(&stats).unwrap();
-        assert_eq!((field.value.as_str(), field.aside.as_deref()), ("Auto", Some("1080p 720p 360p")));
+        let field = quality(&stats, it).unwrap();
+        assert_eq!((field.label.as_ref(), field.value.as_str(), field.aside.as_deref()), ("QUALITÀ", "Auto", Some("1080p 720p 360p")));
+        assert_eq!(quality(&stats, Language::English).unwrap().label, "QUALITY");
         stats.quality = Quality::Lines(720);
-        assert_eq!(quality(&stats).unwrap().value, "720p");
+        assert_eq!(quality(&stats, it).unwrap().value, "720p");
     }
 
     #[test]
     fn the_state_reads_as_a_word_and_an_error_as_itself() {
-        assert_eq!(state(&State::Playing), ("In riproduzione".into(), false));
-        assert_eq!(state(&State::Stopped), ("Fermato".into(), false));
-        assert_eq!(state(&State::Failed("rete assente".into())), ("Errore: rete assente".into(), true));
+        let it = Language::Italian;
+        assert_eq!(state(&State::Playing, it), ("In riproduzione".into(), false));
+        assert_eq!(state(&State::Stopped, Language::English), ("Stopped".into(), false));
+        let failed = State::Failed(Failure::Thread("Resource temporarily unavailable".into()));
+        assert_eq!(state(&failed, it), ("Errore: Resource temporarily unavailable".into(), true));
+        let codec = State::Failed(Failure::Playback(playback::Error::VideoCodec(Some("mpeg2video 720×576".into()))));
+        assert_eq!(state(&codec, it).0, "Errore: codec video non supportato: mpeg2video 720×576");
+        assert_eq!(state(&codec, Language::English).0, "Error: unsupported video codec: mpeg2video 720×576");
+        let no_video = State::Failed(Failure::Playback(playback::Error::VideoCodec(None)));
+        assert_eq!(state(&no_video, it).0, "Errore: il flusso non ha video");
         assert_eq!(clock(Duration::from_secs(75)), "1:15");
         assert_eq!(clock(Duration::from_secs(3725)), "1:02:05");
     }

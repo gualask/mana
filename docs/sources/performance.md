@@ -104,3 +104,64 @@ The B1 measurements of our process are in [ARM CPU](cpu-arm.md#checks-on-the-b1)
   official. Mana creates one `Agent` per source
   ([net.rs](../../crates/core/src/net.rs)), and in the Rai Scuola profile
   certificate verification does not show up.
+
+## Memory
+
+Measured on the B1 on 22 November 2026, release build, 30 s from
+`/proc/PID/smaps` after 45 s of viewing; between two launches of the same
+build the heap varies by about 3 MB. Rai 1 at 720p (2.8 Mbit/s, 10 s
+segments, separate audio), Nove at 1080p (7.1 Mbit/s, fMP4 with separate
+audio).
+
+- RSS with fontdue: 122–125 MB on Rai 1, 138–140 MB on Nove, 78 MB on the
+  home screen without playback. CPU 0.10 and 0.13 cores.
+- GPU memory is not in RSS: the `/dev/mali0` mappings have no resident pages.
+  The kernel reports it per process in `/proc/gpu/PID`, in 4 KB pages, and in
+  total as `GPUTotal` in `/proc/meminfo`: 12.5 MB for Mana during a live
+  stream, 10.8 MB on the home screen.
+- The main heap (`[heap]`) held 47–54 MB, already 51 MB on the home screen:
+  fontdue 0.9.5 builds the outlines of every glyph when loading ("Fonts are
+  fully parsed on creation", a non-goal of its
+  [README](https://github.com/mooman219/fontdue#non-goals), official), and
+  `LG_Smart_UI-Regular.ttf` (2.7 MB, 14,254 glyphs) takes 47 MB after
+  `Font::from_bytes` (measured on the Mac with a counting allocator).
+  ab_glyph 0.2 reads an outline when the glyph is drawn: the file plus 3 KB
+  after 40 glyphs. With ab_glyph
+  ([text.rs](../../apps/tv/src/screens/text.rs)) the app takes 78 MB on Rai 1,
+  95 MB on Nove and 30 MB on the home screen, same CPU and same text on
+  screen (screenshots compared).
+- Frames swapped before the compositor shows the window cost a third
+  1920×1080 buffer, 8 MB of GPU memory for the whole life of the process:
+  with fontdue loading the font delayed the first frame; without it the
+  loader of an autoplayed channel redrew at once and `/proc/gpu/PID` went
+  from 12.5 to 20.7 MB, back to 12.1 MB when the first frame waits for
+  `SDL_WINDOWEVENT_FOCUS_GAINED`, which arrives about 200 ms after the window
+  opens ([main.rs](../../apps/tv/src/main.rs)). None of plx-native,
+  moonlight-tv, stremio-origin, webos-native-app-kit and punktfunk waits
+  before its first frame or limits the EGL buffers; SDL-webOS waits for the
+  Wayland frame callback at most 50 ms at 60 Hz, then swaps anyway
+  ([SDL_waylandopengles.c](https://github.com/webosbrew/SDL-webOS/blob/df872985380ba0b5ae0fa97cca7cedf2d95bd959/src/video/wayland/SDL_waylandopengles.c)),
+  official; that the callbacks do not arrive before the window is shown is
+  inference.
+- Fonts in the other native apps: stremio-origin and webos-native-app-kit
+  map the system fonts with `mmap` and read only the pages of the glyphs used
+  ([text.c](https://github.com/stremio-origin/webos/blob/911e61a00276685b81392bf9541dcf5b542f8b62/src/ui/text.c),
+  [font.cpp](https://github.com/Native-Webos/webos-native-app-kit/blob/c13695e09a1319ecc6bfca9d72f4cf3d44647a45/render/src/font.cpp)),
+  plx-native opens SDL_ttf per size and measures 2.1 MB per size of a CJK
+  face
+  ([text.rs](https://github.com/plxnative/plx-native/blob/e4c9ac7b3ad82a0e60dfcafcdec8404f3a973d43/rust-modules/gfx/src/text.rs)),
+  RetroArch uses FreeType with `LG_Smart_UI-Regular.ttf` in its webOS list
+  ([font_driver.c](https://github.com/libretro/RetroArch/blob/76d55c7ec36e3f5819a6540130365d6ad0e7eb67/gfx/font_driver.c)),
+  official. None uses fontdue or ab_glyph.
+- The segments waiting for the demuxer are the largest anonymous mappings:
+  on Nove five of 8 MB with 5–6 MB resident each (three queued, the one being
+  read and the one downloading). With one queued segment instead of three
+  (with fontdue), Nove drops to 130 MB, Rai 1 does not change (it never holds more than one
+  10 s segment queued).
+- `MALLOC_ARENA_MAX=2` (`mallopt` at start, with fontdue): 124 MB on Rai 1,
+  139 MB on Nove, no gain.
+- Copies of the data in the app's code (`memcpy`, `memmove` in the binary):
+  2% of the samples on Nove, about 0.003 cores; the demux thread, which copies
+  into FFmpeg's buffer and out of its packets, is 4% of the samples. On Nove
+  TLS uses AES-GCM (`_bsaes_encrypt8`, `gcm_ghash_neon`): 14% of the samples,
+  0.019 cores.

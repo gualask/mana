@@ -1,6 +1,7 @@
 //! Over the video: the keys of the channel list, the quality menu and the
 //! video itself, and the drawing of the panel and the menu.
 
+use mana_core::language::Language;
 use mana_core::log::log;
 
 use super::gfx::Renderer;
@@ -42,7 +43,7 @@ impl App {
         match action {
             Action::Back => {
                 self.session.stop();
-                log!("riproduzione fermata");
+                log!("playback stopped");
             }
             Action::Select => self.channels_open = true,
             Action::Up | Action::Down => self.info.toggle(),
@@ -62,16 +63,16 @@ impl App {
 
     /// The loader until the first frame, the panel, when shown, and the
     /// quality menu, when open.
-    pub(super) fn draw_over_video(&mut self, r: &mut Renderer, t: &mut Text, s: f32, surface: (i32, i32)) {
+    pub(super) fn draw_over_video(&mut self, r: &mut Renderer, t: &mut Text, s: f32, surface: (i32, i32), language: Language) {
         let Some(stats) = self.session.stats() else { return };
         if loader::waiting(&stats) {
             loader::draw(r, s, surface, self.info.watched());
         }
-        self.info.draw(r, t, s, &stats);
+        self.info.draw(r, t, s, &stats, language);
         if let Some(menu) = &self.quality_menu
             && !stats.live.heights.is_empty()
         {
-            menu.draw(r, t, s, &stats.live.heights, stats.quality, &mut self.hits);
+            menu.draw(r, t, s, &stats, &mut self.hits, language);
         }
     }
 }

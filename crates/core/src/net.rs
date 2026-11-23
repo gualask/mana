@@ -13,10 +13,17 @@ use std::time::Duration;
 
 use url::{Origin, Url};
 
+use crate::language::{Language, Localized, display_in_english};
+use crate::text;
+
 /// The longest value sent in one line of a request, a URL or a header
 /// value: room for a JWT or a session cookie, well within the 8 KB a
 /// server usually takes for a line.
 pub const MAX_LINE_VALUE: usize = 4096;
+/// The largest text document read: a playlist, the JSON a recipe reads, a
+/// channel list or an M3U list it includes. RaiPlay's playlists are 242 KB,
+/// a two-hour window of 2 s segments is about 0.6 MB.
+pub const MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// Desktop Chrome's: the requests are those of a browser's HLS player,
@@ -30,39 +37,65 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 const CREDENTIALS: [&str; 3] = ["Authorization", "Proxy-Authorization", "Cookie"];
 
 /// A failed request; it names the URL as `loggable_path`.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
-    /// The HTTP status of an answer that was not a success.
-    pub status: Option<u16>,
+    kind: Kind,
+    /// The URL, as `loggable_path`.
+    path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Kind {
+    /// An answer that was not a success, with its HTTP status.
+    Status(u16),
     /// An answer longer than its bound: asking again brings the same.
-    oversized: bool,
-    message: String,
+    Oversized(u64),
+    /// An answer with nothing in it.
+    Empty,
+    /// The transport, or the reading of the body, failed: what it reports,
+    /// not translated.
+    Transport(String),
 }
 
 impl Error {
+    /// The HTTP status of an answer that was not a success.
+    pub fn status(&self) -> Option<u16> {
+        match self.kind {
+            Kind::Status(code) => Some(code),
+            _ => None,
+        }
+    }
+
     /// Whether the server refused the URL's token (expired, as RaiPlay's
     /// after 24 h): only new URLs can help.
     pub fn is_refused(&self) -> bool {
-        matches!(self.status, Some(401 | 403 | 410))
+        matches!(self.status(), Some(401 | 403 | 410))
     }
 
     /// Whether the answer was longer than what it may be.
     pub fn is_oversized(&self) -> bool {
-        self.oversized
+        matches!(self.kind, Kind::Oversized(_))
+    }
+
+    /// An answer from `url` with nothing in it.
+    pub fn empty(url: &Url) -> Self {
+        Self { kind: Kind::Empty, path: loggable_path(url) }
     }
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str(&self.message)
+impl Localized for Error {
+    fn text(&self, language: Language) -> String {
+        let path = &self.path;
+        match &self.kind {
+            Kind::Status(code) => text!(language, "net-status", code = code, path = path),
+            Kind::Oversized(limit) => text!(language, "net-oversized", path = path, limit = limit),
+            Kind::Empty => text!(language, "net-empty", path = path),
+            Kind::Transport(detail) => format!("{path}: {detail}"),
+        }
     }
 }
 
-impl From<Error> for String {
-    fn from(error: Error) -> Self {
-        error.message
-    }
-}
+display_in_english!(Error);
 
 #[derive(Clone)]
 pub struct Client {
@@ -182,25 +215,24 @@ pub fn read_rest(url: &Url, body: impl Read, limit: u64) -> Result<Vec<u8>, Erro
     let mut data = Vec::new();
     body.take(limit.saturating_add(1)).read_to_end(&mut data).map_err(|e| read_error(url, &e))?;
     if data.len() as u64 > limit {
-        let message = format!("{}: risposta oltre {} byte", loggable_path(url), limit);
-        return Err(Error { status: None, oversized: true, message });
+        return Err(Error { kind: Kind::Oversized(limit), path: loggable_path(url) });
     }
     Ok(data)
 }
 
 /// Reading the body of an answer from `url` failed.
 pub fn read_error(url: &Url, error: &std::io::Error) -> Error {
-    Error { status: None, oversized: false, message: format!("{}: {error}", loggable_path(url)) }
+    Error { kind: Kind::Transport(error.to_string()), path: loggable_path(url) }
 }
 
 /// A failed request to `url`: the server's status, or what the transport
 /// reports and its cause.
 fn request_error(url: &Url, error: ureq::Error) -> Error {
     match error {
-        ureq::Error::Status(code, _) => Error { status: Some(code), oversized: false, message: format!("HTTP {code} per {}", loggable_path(url)) },
+        ureq::Error::Status(code, _) => Error { kind: Kind::Status(code), path: loggable_path(url) },
         ureq::Error::Transport(transport) => {
             let cause = std::error::Error::source(&transport).map(|c| format!(": {c}")).unwrap_or_default();
-            Error { status: None, oversized: false, message: format!("{}: {}{cause}", loggable_path(url), transport.kind()) }
+            Error { kind: Kind::Transport(format!("{}{cause}", transport.kind())), path: loggable_path(url) }
         }
     }
 }

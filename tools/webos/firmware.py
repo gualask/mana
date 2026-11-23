@@ -2,8 +2,8 @@
 """Check that what the app takes from the TV's system exists on every webOS
 from 6 on, the oldest supported.
 
-The app opens SDL and Starfish with dlopen and takes their functions by
-name (apps/tv/src/platform), so neither the linker nor tools/webos/elf.py
+The app opens SDL, Starfish and libhelpers with dlopen and takes their
+functions by name (apps/tv/src/platform), so neither the linker nor tools/webos/elf.py
 sees them. webosbrew's firmware database (dev-toolbox-cli, common/data)
 lists for each firmware the symbols its libraries export. For every
 library the binary names as a soname (`libSDL2-2.0.so.0`,

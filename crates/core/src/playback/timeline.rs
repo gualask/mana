@@ -117,7 +117,7 @@ impl Timeline {
             return Placed { us: latest.apply(source_us).max(0), jumped: false };
         }
         debug!(
-            "salto di {} ms nei timestamp {} (da {} a {} ms): timeline riallineata",
+            "jump of {} ms in the {} timestamps (from {} to {} ms): timeline realigned",
             (latest.apply(source_us) - self.reached_us) / 1000,
             if track == Track::Video { "video" } else { "audio" },
             previous.unwrap_or(0) / 1000,

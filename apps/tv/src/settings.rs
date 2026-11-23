@@ -18,6 +18,8 @@ use crate::platform::DATA_DIR;
 const KEPT_FILE: &str = "mana.conf";
 /// The settings of the tests, gone at the next power-off.
 const TESTS_FILE: &str = "/tmp/mana.conf";
+/// The key of the channel list's URL, which Settings names too.
+pub const LIST_KEY: &str = "list";
 
 /// What the settings file sets.
 #[derive(Default)]
@@ -27,9 +29,13 @@ pub struct Loaded {
     /// The quality of live streams with variants when the app starts
     /// (`quality = auto` or the lines, as `720`), then changed by the menu.
     pub quality: Quality,
-    /// The URL of the channel list (`lista = URL`), instead of the one
+    /// The URL of the channel list (`list = URL`), instead of the one
     /// chosen from the phone, and the file that sets it.
     pub list: Option<(Url, PathBuf)>,
+    /// The TV's locale code in place of the one the TV gives, without
+    /// asking it (`locale = it-IT`); empty, a TV whose language cannot be
+    /// read. Only in the tests' file.
+    pub locale: Option<String>,
     /// The log with the lines that repeat while playing (`debug = true`),
     /// to debug.
     pub debug: bool,
@@ -38,15 +44,16 @@ pub struct Loaded {
 /// The settings of both files, those of the tests last.
 pub fn load() -> Loaded {
     let mut loaded = Loaded::default();
-    read(&Path::new(DATA_DIR).join(KEPT_FILE), &mut loaded);
-    read(Path::new(TESTS_FILE), &mut loaded);
+    read(&Path::new(DATA_DIR).join(KEPT_FILE), &mut loaded, false);
+    read(Path::new(TESTS_FILE), &mut loaded, true);
     loaded
 }
 
-/// Applies to `loaded` any valid line of `path`; other lines are logged.
-fn read(path: &Path, loaded: &mut Loaded) {
+/// Applies to `loaded` any valid line of `path`, the tests' file if
+/// `for_tests`; other lines are logged.
+fn read(path: &Path, loaded: &mut Loaded, for_tests: bool) {
     let Ok(text) = std::fs::read_to_string(path) else { return };
-    let Loaded { playback, tests, quality, list, debug } = loaded;
+    let Loaded { playback, tests, quality, list, locale, debug } = loaded;
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
         let Some((key, value)) = line.split_once('=') else { continue };
         let (key, value) = (key.trim(), value.trim());
@@ -60,15 +67,19 @@ fn read(path: &Path, loaded: &mut Loaded) {
             "ui_test" => value.parse().ok().map(|v| tests.ui_test = v),
             "quality" => value.parse().ok().map(|q| *quality = q),
             "debug" => value.parse().ok().map(|v| *debug = v),
-            "lista" => list_url(value)
-                .inspect_err(|e| log!("lista in {}: {e}", path.display()))
+            LIST_KEY => list_url(value)
+                .inspect_err(|e| log!("list in {}: {e}", path.display()))
                 .ok()
                 .map(|url| *list = Some((url, path.to_path_buf()))),
+            "locale" if for_tests => {
+                *locale = Some(value.to_string());
+                Some(())
+            }
             _ => None,
         };
         if applied.is_none() {
             // The key only: a value may carry a token, as a list's URL.
-            log!("impostazione ignorata in {}: {key}", path.display());
+            log!("setting ignored in {}: {key}", path.display());
         }
     }
 }

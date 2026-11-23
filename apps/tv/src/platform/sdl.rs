@@ -55,7 +55,7 @@ impl Api {
             macro_rules! sym {
                 ($name:literal) => {
                     *lib.get(concat!($name, "\0").as_bytes())
-                        .map_err(|e| format!("simbolo SDL mancante {}: {e}", $name))?
+                        .map_err(|e| format!("SDL symbol missing {}: {e}", $name))?
                 };
             }
             Ok(Self {
@@ -212,7 +212,7 @@ fn open_first(candidates: &[&str]) -> Result<Library, String> {
             Err(e) => errors.push(format!("{path}: {e}")),
         }
     }
-    Err(format!("SDL non trovata ({})", errors.join("; ")))
+    Err(format!("SDL not found ({})", errors.join("; ")))
 }
 
 fn last_error(api: &Api) -> String {

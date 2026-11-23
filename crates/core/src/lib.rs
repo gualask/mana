@@ -5,6 +5,7 @@
 
 mod adts;
 pub mod catalog;
+pub mod language;
 pub mod live;
 pub mod log;
 pub mod net;

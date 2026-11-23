@@ -133,7 +133,7 @@ impl Logos {
             Err(error) => {
                 self.failed += 1;
                 if self.failed <= LOGGED_FAILURES {
-                    log!("loghi: {error}");
+                    log!("logos: {error}");
                 }
                 self.states.insert(url, State::Failed);
                 None
@@ -185,7 +185,7 @@ fn spawn_workers(
     let client = match Client::new() {
         Ok(client) => client,
         Err(error) => {
-            log!("loghi: client HTTP non creato: {error}");
+            log!("logos: HTTP client not created: {error}");
             return;
         }
     };
@@ -195,7 +195,7 @@ fn spawn_workers(
             .name(format!("logo{i}"))
             .spawn(move || work(&queue, &results, &client, &in_flight));
         if let Err(error) = spawned {
-            log!("loghi: thread non avviato: {error}");
+            log!("logos: thread not started: {error}");
         }
     }
 }
@@ -231,7 +231,7 @@ fn fetch(client: &Client, url: &str) -> Result<Vec<u8>, String> {
     if !url.starts_with("http") {
         return std::fs::read(url).map_err(|e| e.to_string());
     }
-    Ok(client.get_small(&Url::parse(url).map_err(|e| e.to_string())?, MAX_LOGO_BYTES, FETCH_TIMEOUT)?)
+    client.get_small(&Url::parse(url).map_err(|e| e.to_string())?, MAX_LOGO_BYTES, FETCH_TIMEOUT).map_err(|e| e.to_string())
 }
 
 /// Decodes and scales the logo to fit a texture slot, keeping its shape;

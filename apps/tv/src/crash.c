@@ -15,7 +15,7 @@ static volatile sig_atomic_t handling;
 
 static void on_fatal(int signal_number) {
     if (handling++) _exit(128 + signal_number); /* fault while reporting */
-    char line[48] = "segnale fatale ";
+    char line[48] = "fatal signal ";
     int length = (int)strlen(line);
     if (signal_number >= 10) line[length++] = (char)('0' + signal_number / 10);
     line[length++] = (char)('0' + signal_number % 10);

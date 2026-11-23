@@ -54,7 +54,7 @@ pub(super) fn follow(
     url: Url,
     first: Option<Body>,
     stop: &Stop,
-) -> Result<HlsStream, String> {
+) -> std::io::Result<HlsStream> {
     let (sender, queue) = sync_channel(QUEUED_CHUNKS);
     let mut downloader = Downloader::new(client.clone(), "ts");
     let thread_stop = stop.clone();
@@ -68,8 +68,7 @@ pub(super) fn follow(
             };
             log!("ts: {interruption}");
             thread_stop.interrupt(interruption);
-        })
-        .map_err(|e| e.to_string())?;
+        })?;
     Ok(HlsStream::new(queue, stop.clone()))
 }
 
@@ -89,13 +88,13 @@ fn read(
         };
         let Some(body) = answer else { return Ok(()) };
         if section > 0 {
-            log!("ts: di nuovo connesso, sezione {section}");
+            log!("ts: connected again, section {section}");
         }
         if sender.send(Chunk::Section(section)).is_err() {
             return Ok(());
         }
         let Some(reason) = pass_on(body, url, sender, stop) else { return Ok(()) };
-        log!("ts: {reason}, nuova richiesta");
+        log!("ts: {reason}, new request");
     }
     Ok(())
 }
@@ -109,7 +108,7 @@ fn connect(downloader: &mut Downloader, url: &Url, stop: &Stop) -> Result<Option
         let (_, mut body) = d.client().open(url)?;
         let head = read_up_to(&mut body, 1).map_err(|e| net::read_error(url, &e))?;
         if head.is_empty() {
-            return Err(Failure::Transient(format!("{}: risposta vuota", net::loggable_path(url))));
+            return Err(Failure::Transient(net::Error::empty(url).into()));
         }
         Ok(rejoin(head, body))
     })
@@ -123,10 +122,10 @@ fn pass_on(mut body: Body, url: &Url, sender: &SyncSender<Chunk>, stop: &Stop) -
     while !stop.is_set() {
         let (mut chunk, broken) = match read_up_to(&mut body, CHUNK) {
             Ok(chunk) if chunk.len() == CHUNK => (chunk, None),
-            Ok(chunk) => (chunk, Some("risposta chiusa dal server".to_string())),
+            Ok(chunk) => (chunk, Some("answer closed by the server".to_string())),
             // What came before the error is lost with the rest of the
             // chunk: the next section starts afresh anyway.
-            Err(error) => (Vec::new(), Some(net::read_error(url, &error).into())),
+            Err(error) => (Vec::new(), Some(net::read_error(url, &error).to_string())),
         };
         tables.trim(&mut chunk);
         let ready = margin.pass(chunk, broken.is_some());
@@ -167,8 +166,8 @@ impl TablesFirst {
         chunk.drain(..cut);
         self.dropped += cut;
         if self.done && self.dropped > 0 {
-            let outcome = if found.is_some() { "fino alle tabelle del programma" } else { "senza trovare le tabelle del programma" };
-            log!("ts: scartati {} KB {outcome}", self.dropped / 1024);
+            let outcome = if found.is_some() { "up to the program tables" } else { "without finding the program tables" };
+            log!("ts: {} KB dropped {outcome}", self.dropped / 1024);
         }
     }
 }
@@ -199,7 +198,7 @@ impl Margin {
         let ready = self.gathered || last || full || self.since.is_some_and(|since| since.elapsed() >= START_MARGIN);
         if ready && !self.gathered {
             self.gathered = true;
-            log!("ts: margine raccolto, {} KB", self.held_bytes / 1024);
+            log!("ts: margin gathered, {} KB", self.held_bytes / 1024);
         }
         if ready { std::mem::take(&mut self.held) } else { Vec::new() }
     }

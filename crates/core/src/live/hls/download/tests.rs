@@ -66,7 +66,7 @@ fn a_slow_variant_gives_way_to_a_lighter_one_at_the_same_time_in_a_new_section()
         asked.lock().unwrap().clear();
         let viewing = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(Mutex::new(Stats::default()));
-        let source = Source::direct(format!("{address}/master-{numbering}.m3u8"), Vec::new());
+        let source = Source::direct(format!("{address}/master-{numbering}.m3u8").parse().unwrap(), Vec::new());
         let live = Live::resolve(&source, &Stop::new(&viewing), stats, &QualityChoice::default()).unwrap().unwrap();
         let mut stream = live.open(&Stop::new(&viewing)).unwrap().main;
         let mut first = String::new();

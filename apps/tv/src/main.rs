@@ -37,6 +37,13 @@ const LOADING_REDRAW_MS: i32 = 100;
 const LOADER_REDRAW_MS: i32 = screens::LOADER_REDRAW.as_millis() as i32;
 /// While animating, events are only polled: the vsync'd swap paces frames.
 const ANIMATING_REDRAW_MS: i32 = 0;
+/// SDL window event: the window got the focus, after the compositor showed it.
+const WINDOW_FOCUS_GAINED: u8 = 12;
+/// How long the first frame waits for the focus at most.
+const FIRST_FRAME_LIMIT: Duration = Duration::from_secs(1);
+/// While the first frame waits for the TV's language, which comes within
+/// `locale::LIMIT`, events are waited for this long at most.
+const LANGUAGE_POLL_MS: i32 = 20;
 /// How long closing waits for playback to end. A native app is killed
 /// about a second after SIGTERM, which SDL turns into Quit: unloading
 /// Starfish in time leaves nothing for the system to clean up.
@@ -48,16 +55,16 @@ fn main() {
     #[cfg(webos)]
     platform::install_crash_handler(LOG_FILE);
     // webOS passes launch parameters as a JSON string in argv[1].
-    log!("avvio, parametri: {}", std::env::args().nth(1).unwrap_or_default());
-    log!("istruzioni AES della CPU: {}", if platform::use_aes_instructions() { "sì" } else { "no" });
+    log!("start, parameters: {}", std::env::args().nth(1).unwrap_or_default());
+    log!("CPU AES instructions: {}", if platform::use_aes_instructions() { "yes" } else { "no" });
     match run() {
-        Ok(true) => log!("uscita"),
+        Ok(true) => log!("exit"),
         Ok(false) => {
-            log!("uscita senza attendere la fine della riproduzione");
+            log!("exit without waiting for playback to end");
             platform::exit_now();
         }
         Err(error) => {
-            log!("errore: {error}");
+            log!("error: {error}");
             std::process::exit(1);
         }
     }
@@ -73,17 +80,34 @@ fn run() -> Result<bool, String> {
     let mut app = App::new(Session::new(platform::open_backend()));
     let mut autotest = Autotest::start(&mut app);
     let mut surface = sdl.drawable_size();
-    log!("GL {} · superficie {surface:?}", renderer.info());
+    log!("GL {} · surface {surface:?}", renderer.info());
     let mut pointer = Pointer::new(sdl.pixels_per_unit());
+    // Frames swapped before the compositor shows the window are not given
+    // back in time: the driver adds a 1920×1080 buffer, 8 MB of GPU memory
+    // for the app's whole life. The loader redraws at once, so wait. The
+    // first frame also waits for the TV's language, so that the text never
+    // changes language on screen.
+    let started = Instant::now();
+    let mut focused = false;
+    // Until the window has the focus, for at most FIRST_FRAME_LIMIT.
+    let held_for_focus = |focused: bool| !focused && started.elapsed() < FIRST_FRAME_LIMIT;
 
     loop {
         let timeout = redraw_timeout(&autotest, &app);
         app.refresh();
         autotest.tick(&mut app);
         log::trim();
+        let timeout = if held_for_focus(focused) { timeout.max(LOADER_REDRAW_MS) } else { timeout };
+        let timeout = if app.language_ready() { timeout } else { timeout.min(LANGUAGE_POLL_MS) };
         let mut events = sdl.wait_events(timeout).into_iter();
-        if events.any(|event| matches!(handle_event(event, &mut app, &mut pointer), Outcome::Exit)) {
+        if events.any(|event| {
+            focused |= matches!(event, Event::Window(WINDOW_FOCUS_GAINED));
+            matches!(handle_event(event, &mut app, &mut pointer), Outcome::Exit)
+        }) {
             return Ok(app.close(CLOSE_LIMIT));
+        }
+        if held_for_focus(focused) || !app.language_ready() {
+            continue;
         }
         surface = sdl.drawable_size();
         pointer.set_scale(sdl.pixels_per_unit());
@@ -117,11 +141,11 @@ fn handle_event(event: Event, app: &mut App, pointer: &mut Pointer) -> Outcome {
     match event {
         Event::Quit | Event::Lifecycle(APP_TERMINATING) => return Outcome::Exit,
         Event::Key { down: true, repeat, scancode, keycode } => {
-            debug!("tasto scancode={scancode} keycode={keycode} repeat={repeat}");
+            debug!("key scancode={scancode} keycode={keycode} repeat={repeat}");
             return key(scancode, app, pointer, now);
         }
-        Event::Lifecycle(kind) => debug!("ciclo di vita 0x{kind:x}"),
-        Event::Window(id) => debug!("finestra evento {id}"),
+        Event::Lifecycle(kind) => debug!("lifecycle 0x{kind:x}"),
+        Event::Window(id) => debug!("window event {id}"),
         Event::PointerMove { x, y } => {
             let at = pointer.pixels(x, y);
             // A tremor after an arrow key moves nothing.

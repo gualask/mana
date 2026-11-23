@@ -1,6 +1,8 @@
-//! Platform integration: process environment, SDL window and input mapping.
+//! Platform integration: process environment, SDL window, input mapping
+//! and the TV's language.
 
 pub mod keys;
+pub mod locale;
 pub mod pointer;
 pub mod sdl;
 #[cfg(webos)]
@@ -84,11 +86,12 @@ pub fn open_backend() -> OpenBackend {
         const APP_ID_FALLBACK: &str = "dev.mana.app";
         let app_id = std::env::var("APPID").unwrap_or_else(|_| APP_ID_FALLBACK.into());
         std::sync::Arc::new(move || {
-            Ok(Box::new(starfish::Starfish::open(SDL_CANDIDATES, app_id.clone())?) as Box<dyn mana_core::playback::Backend>)
+            let starfish = starfish::Starfish::open(SDL_CANDIDATES, app_id.clone())?;
+            Ok(Box::new(starfish) as Box<dyn mana_core::playback::Backend>)
         })
     }
     #[cfg(not(webos))]
-    std::sync::Arc::new(|| Err("riproduzione disponibile solo sulla TV".into()))
+    std::sync::Arc::new(|| Err(mana_core::playback::BackendError::Unavailable))
 }
 
 /// Whether segments are decrypted with the CPU's AES instructions: on the

@@ -176,7 +176,7 @@ mod tests {
         let post = parse(&format!("POST /K7QM HTTP/1.1\r\ncontent-length: {}\r\n\r\n{body}", body.len())).unwrap();
         assert_eq!(post.method, Method::Post);
         assert_eq!(form_value(&post.body, "url").as_deref(), Some("https://a.example/l.toml?x=1&y=2"));
-        assert_eq!(form_value(b"altro=1", "url"), None);
+        assert_eq!(form_value(b"other=1", "url"), None);
         assert_eq!(form_value(b"url=a+b", "url").as_deref(), Some("a b"));
     }
 

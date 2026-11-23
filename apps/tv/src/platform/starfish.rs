@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use libloading::Library;
 
 use mana_core::log::{debug, log};
-use mana_core::playback::{AudioCodec, Backend, Formats, VideoCodec};
+use mana_core::playback::{AudioCodec, Backend, BackendError, Formats, VideoCodec};
 use events::{SHARED, Shared, on_event, wait_for};
 
 const LIBRARY: &str = "libplayerAPIs.so.1";
@@ -84,21 +84,22 @@ impl Starfish {
     /// Loads the library, creates the video window and the pipeline object.
     /// `sdl` lists where the SDL library the app runs on is found; the
     /// pipeline is loaded on behalf of `app_id`.
-    pub fn open(sdl: &[&str], app_id: String) -> Result<Self, String> {
+    pub fn open(sdl: &[&str], app_id: String) -> Result<Self, BackendError> {
         // SAFETY: firmware libraries with no load-time preconditions; SDL is
         // already loaded by the platform layer, this only takes a reference.
-        let player = unsafe { Library::new(LIBRARY) }.map_err(|e| format!("{LIBRARY}: {e}"))?;
+        let player = unsafe { Library::new(LIBRARY) }.map_err(|e| BackendError::Open(format!("{LIBRARY}: {e}")))?;
+        let mut errors = Vec::new();
         let sdl = sdl
             .iter()
             // SAFETY: as above.
-            .find_map(|path| unsafe { Library::new(*path) }.ok())
-            .ok_or("SDL non trovata")?;
+            .find_map(|path| unsafe { Library::new(*path) }.inspect_err(|e| errors.push(format!("{path}: {e}"))).ok())
+            .ok_or_else(|| BackendError::Open(errors.join("; ")))?;
         // SAFETY: symbols are cast to the signatures of StarfishMediaAPIs.h
         // (webos-userland) and LG's SDL webOS extensions.
         let api = unsafe {
             macro_rules! sym {
                 ($lib:expr, $name:literal) => {
-                    *$lib.get(concat!($name, "\0").as_bytes()).map_err(|e| format!("{}: {e}", $name))?
+                    *$lib.get(concat!($name, "\0").as_bytes()).map_err(|e| BackendError::Open(format!("{}: {e}", $name)))?
                 };
             }
             Api {
@@ -119,7 +120,7 @@ impl Starfish {
         let window = unsafe {
             let id = (api.create_window)(EXPORTED_WINDOW_VIDEO);
             if id.is_null() {
-                return Err("finestra video esportata non creata".into());
+                return Err(BackendError::NoWindow);
             }
             let id = CStr::from_ptr(id).to_owned();
             (api.set_window)(id.as_ptr(), &SCREEN, &SCREEN);
@@ -134,39 +135,39 @@ impl Starfish {
 
     /// With audio, loading completes only once data has arrived, so feeding
     /// starts right after Load and Play follows the completion event.
-    fn play_when_loaded(&mut self) -> Result<(), String> {
+    fn play_when_loaded(&mut self) -> Result<(), BackendError> {
         let Some(loaded_at) = self.loaded.filter(|_| !self.playing) else { return Ok(()) };
         let completed = {
             let mut shared = SHARED.lock().unwrap();
             if let Some(error) = shared.error.take() {
-                return Err(format!("Starfish: {error}"));
+                return Err(BackendError::Reported(error));
             }
             shared.load_completed
         };
         if !completed {
             return if loaded_at.elapsed() > LOAD_TIMEOUT {
-                Err("Starfish: caricamento non completato".into())
+                Err(BackendError::LoadTimeout)
             } else {
                 Ok(())
             };
         }
         // SAFETY: same thread as every other call.
         if !unsafe { (self.api.play)(self.this()) } {
-            return Err("Starfish Play rifiutato".into());
+            return Err(BackendError::PlayRefused);
         }
         self.playing = true;
-        log!("Starfish Play dopo {} ms", loaded_at.elapsed().as_millis());
+        log!("Starfish Play after {} ms", loaded_at.elapsed().as_millis());
         Ok(())
     }
 
-    fn feed(&mut self, data: &[u8], pts_ns: i64, es: u8) -> Result<bool, String> {
+    fn feed(&mut self, data: &[u8], pts_ns: i64, es: u8) -> Result<bool, BackendError> {
         self.play_when_loaded()?;
         let payload = format!(
             r#"{{"bufferAddr":"{:#x}","bufferSize":{},"pts":{pts_ns},"esData":{es}}}"#,
             data.as_ptr() as usize,
             data.len()
         );
-        let payload = CString::new(payload).map_err(|e| e.to_string())?;
+        let payload = CString::new(payload).map_err(|e| BackendError::Reported(e.to_string()))?;
         let mut result = StdString { data: std::ptr::null_mut(), len: 0, local: [0; 16] };
         // SAFETY: the pipeline copies the buffer before returning and
         // constructs `result` in place; we free it below as libstdc++ would.
@@ -185,7 +186,7 @@ impl Starfish {
         } else if reply.contains("BufferFull") {
             Ok(false)
         } else {
-            Err(format!("Starfish Feed: {reply}"))
+            Err(BackendError::Reported(reply))
         }
     }
 
@@ -195,23 +196,23 @@ impl Starfish {
 }
 
 impl Backend for Starfish {
-    fn load(&mut self, formats: &Formats) -> Result<(), String> {
+    fn load(&mut self, formats: &Formats) -> Result<(), BackendError> {
         let payload = load_payload(formats, &self.app_id, &self.window.to_string_lossy());
         debug!("Starfish Load: {payload}");
-        let payload = CString::new(payload).map_err(|e| e.to_string())?;
+        let payload = CString::new(payload).map_err(|e| BackendError::Reported(e.to_string()))?;
         // SAFETY: same thread for every call; the payload outlives the call.
         if !unsafe { (self.api.load)(self.this(), payload.as_ptr(), on_event) } {
-            return Err("Starfish Load rifiutato".into());
+            return Err(BackendError::LoadRefused);
         }
         self.loaded = Some(Instant::now());
         Ok(())
     }
 
-    fn feed_video(&mut self, data: &[u8], pts_ns: i64) -> Result<bool, String> {
+    fn feed_video(&mut self, data: &[u8], pts_ns: i64) -> Result<bool, BackendError> {
         self.feed(data, pts_ns, ES_VIDEO)
     }
 
-    fn feed_audio(&mut self, data: &[u8], pts_ns: i64) -> Result<bool, String> {
+    fn feed_audio(&mut self, data: &[u8], pts_ns: i64) -> Result<bool, BackendError> {
         self.feed(data, pts_ns, ES_AUDIO)
     }
 
@@ -282,7 +283,7 @@ impl Drop for Starfish {
             if unloaded {
                 (self.api.destruct)(self.this());
             } else {
-                log!("Starfish: scaricamento non confermato, oggetto lasciato in memoria");
+                log!("Starfish: unloading not confirmed, object left in memory");
                 std::mem::forget(std::mem::replace(&mut self.object, Box::new([0; OBJECT_WORDS])));
             }
             (self.api.destroy_window)(self.window.as_ptr());

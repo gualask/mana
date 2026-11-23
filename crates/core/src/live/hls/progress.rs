@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use super::playlist::MediaPlaylist;
+use crate::live::Stall;
 use crate::log::log;
 
 /// A live playlist with nothing new for this many half target durations
@@ -49,7 +50,7 @@ impl Progress {
             (None, None) => playlist.live_start(),
         };
         if from < first {
-            log!("hls: rimasto indietro di {} segmenti, salto alla finestra", first - from);
+            log!("hls: {} segments behind, jumping to the window", first - from);
             from = first;
         }
         self.next = Some(from);
@@ -132,13 +133,13 @@ fn starts(playlist: &MediaPlaylist) -> Vec<Start> {
 
 /// Why `playlist` is stuck, when no reload brought a new segment for `idle`,
 /// longer than STUCK_HALF_TARGETS half target durations.
-pub(super) fn stuck(playlist: &MediaPlaylist, idle: Duration, next: Option<u64>) -> Option<String> {
+pub(super) fn stuck(playlist: &MediaPlaylist, idle: Duration, next: Option<u64>) -> Option<Stall> {
     if idle <= (playlist.target_duration / 2).saturating_mul(STUCK_HALF_TARGETS) {
         return None;
     }
     let first = playlist.media_sequence;
     let last = playlist.segments.last().map_or(first, |s| s.sequence);
-    Some(format!("playlist ferma da {} s (ultimo segmento {last}, atteso {})", idle.as_secs(), next.unwrap_or(first)))
+    Some(Stall { idle, last, expected: next.unwrap_or(first) })
 }
 
 /// RFC 8216 §6.3.4: reload after the last segment's duration, or half a
@@ -225,7 +226,8 @@ mod tests {
         let window = playlist(6, 2.0);
         assert_eq!(stuck(&window, Duration::from_secs(7), Some(16)), None);
         let reason = stuck(&window, Duration::from_secs(8), Some(16)).unwrap();
-        assert_eq!(reason, "playlist ferma da 8 s (ultimo segmento 15, atteso 16)");
+        assert_eq!(reason, Stall { idle: Duration::from_secs(8), last: 15, expected: 16 });
+        assert_eq!(reason.to_string(), "playlist still for 8 s (last segment 15, expected 16)");
     }
 
     #[test]

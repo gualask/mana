@@ -17,9 +17,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 use url::Url;
 
-use super::Channel;
+use super::{Channel, list};
+use crate::language::{Language, Localized, display_in_english};
 use crate::log::log;
 use crate::net;
+use crate::text;
 use copies::Copies;
 
 /// The longest list URL taken.
@@ -27,23 +29,74 @@ pub const MAX_URL: usize = net::MAX_LINE_VALUE;
 
 /// The URL `text` gives for a channel list: `http` or `https`, without
 /// control characters, of at most MAX_URL bytes.
-pub fn list_url(text: &str) -> Result<Url, String> {
+pub fn list_url(text: &str) -> Result<Url, UrlError> {
     let text = text.trim();
     if text.is_empty() {
-        return Err("indirizzo vuoto".into());
+        return Err(UrlError::Empty);
     }
     if text.len() > MAX_URL {
-        return Err(format!("indirizzo di {} byte, oltre i {MAX_URL}", text.len()));
+        return Err(UrlError::TooLong(text.len()));
     }
     if text.chars().any(char::is_control) {
-        return Err("caratteri di controllo nell'indirizzo".into());
+        return Err(UrlError::Control);
     }
-    let url = Url::parse(text).map_err(|e| format!("indirizzo non valido: {e}"))?;
+    let url = Url::parse(text).map_err(|e| UrlError::Invalid(e.to_string()))?;
     match url.scheme() {
         "http" | "https" => Ok(url),
-        scheme => Err(format!("schema {scheme} non accettato: serve http o https")),
+        scheme => Err(UrlError::Scheme(scheme.to_string())),
     }
 }
+
+/// Why a text is not a list's URL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UrlError {
+    Empty,
+    /// Its length, over MAX_URL.
+    TooLong(usize),
+    Control,
+    /// What the url crate says.
+    Invalid(String),
+    /// A scheme other than http and https.
+    Scheme(String),
+}
+
+impl Localized for UrlError {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Empty => text!(language, "list-url-empty"),
+            Self::TooLong(length) => text!(language, "list-url-too-long", length = length, max = MAX_URL),
+            Self::Control => text!(language, "list-url-control"),
+            Self::Invalid(detail) => text!(language, "list-url-invalid", detail = detail),
+            Self::Scheme(scheme) => text!(language, "list-url-scheme", scheme = scheme),
+        }
+    }
+}
+
+/// Why a download of the list was not taken.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Network(net::Error),
+    /// The HTTP client could not be made, as TLS says.
+    Client(String),
+    NotUtf8,
+    List(list::Error),
+    /// The thread that downloads the lists did not start.
+    NotStarted,
+}
+
+impl Localized for Failure {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Network(error) => error.text(language),
+            Self::Client(detail) => detail.clone(),
+            Self::NotUtf8 => text!(language, "list-not-utf8"),
+            Self::List(error) => error.text(language),
+            Self::NotStarted => text!(language, "list-update-not-started"),
+        }
+    }
+}
+
+display_in_english!(UrlError, Failure);
 
 /// A download asked, to know its outcome among the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +116,7 @@ pub enum Outcome {
     /// still be there after a power-off.
     Channels { channels: Vec<Channel>, kept: bool },
     /// Why it was not taken: the list shown, if any, stays.
-    Failed(String),
+    Failed(Failure),
 }
 
 /// A download asked: of the URL the app started with, or of one chosen.
@@ -131,7 +184,7 @@ impl Updater {
             None => Some(job),
         };
         if let Some(Job { ticket, url, .. }) = refused {
-            let outcome = Outcome::Failed("aggiornamento della lista non avviato".into());
+            let outcome = Outcome::Failed(Failure::NotStarted);
             drop(self.failures.send(Update { ticket, url, outcome }));
         }
         ticket
@@ -164,14 +217,14 @@ impl Updater {
 /// thread cannot start.
 fn run_in_order(copies: Copies, updates: Sender<Update>) -> Option<Sender<Job>> {
     let (jobs, queue) = channel::<Job>();
-    let spawned = std::thread::Builder::new().name("lista".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("list".into()).spawn(move || {
         for job in queue {
             if updates.send(copies.run(&job)).is_err() {
                 return;
             }
         }
     });
-    spawned.inspect_err(|e| log!("lista: thread non avviato: {e}")).ok().map(|_| jobs)
+    spawned.inspect_err(|e| log!("list: thread not started: {e}")).ok().map(|_| jobs)
 }
 
 #[cfg(test)]

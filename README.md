@@ -9,7 +9,9 @@ Mana contains no channels and no lists: it only plays the sources you choose.
 
 ## What it does
 
-- **Channel list from the phone.** In "Impostazioni" (Settings) the TV shows
+- **English or Italian.** The app follows the TV's language: Italian on a
+  TV set to Italian, English otherwise. "Settings" can also fix it to either.
+- **Channel list from the phone.** In "Settings" the TV shows
   a QR code: on the phone you enter the address of your list, and the TV
   downloads it and remembers it even after it is switched off. The list is
   updated at every start, and if the network is down the last copy stays.
@@ -48,7 +50,7 @@ built, as described in [TV app](docs/tv-app.md#building).
 ## Usage
 
 1. Open Mana and, on the home screen, use the right arrow to go to
-   "Impostazioni" (Settings).
+   "Settings" ("Impostazioni" in Italian).
 2. Scan the QR code with your phone and enter the address of your channel
    list: [Channel list](docs/channel-list.md) explains how to write it.
 3. Choose a channel and press OK.

@@ -5,6 +5,8 @@
 
 use super::ts;
 use crate::adts;
+use crate::language::{Language, Localized};
+use crate::text;
 
 /// ID3 PRIV owner of the segment's first timestamp (90 kHz MPEG-TS clock).
 const TIMESTAMP_OWNER: &[u8] = b"com.apple.streaming.transportStreamTimestamp\0";
@@ -19,6 +21,22 @@ pub fn is_packed_audio(segment: &[u8]) -> bool {
     segment.starts_with(b"ID3") || adts::header(segment).is_some()
 }
 
+/// A packed audio segment this client cannot read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Error {
+    NoTimestamp,
+    NotAac,
+}
+
+impl Localized for Error {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::NoTimestamp => text!(language, "packed-audio-no-timestamp"),
+            Self::NotAac => text!(language, "packed-audio-not-aac"),
+        }
+    }
+}
+
 /// Rewraps packed-audio segments of one playlist; continuity counters run on
 /// across segments, as the demuxer sees them back to back.
 #[derive(Default)]
@@ -28,9 +46,9 @@ pub struct TsRewrapper {
 
 impl TsRewrapper {
     /// Errors are segments this rewrapper cannot read: retrying cannot help.
-    pub fn rewrap(&mut self, segment: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn rewrap(&mut self, segment: &[u8]) -> Result<Vec<u8>, Error> {
         let (timestamp, mut rest) = read_id3_tags(segment);
-        let start = timestamp.ok_or("audio packed senza timestamp ID3")?;
+        let start = timestamp.ok_or(Error::NoTimestamp)?;
         let mut out = Vec::with_capacity(segment.len() * 5 / 4);
         self.psi(&mut out, PAT_PID, 0, &pat());
         self.psi(&mut out, PMT_PID, 1, &pmt());
@@ -40,10 +58,11 @@ impl TsRewrapper {
                 rest = read_id3_tags(rest).1;
                 continue;
             }
-            let Some(adts::Header { length, rate, samples: frame_samples }) = adts::header(rest) else {
-                if samples == 0 {
-                    return Err("audio packed non AAC".into());
-                }
+            let header = adts::header(rest);
+            if header.is_none() && samples == 0 {
+                return Err(Error::NotAac);
+            }
+            let Some(adts::Header { length, rate, samples: frame_samples }) = header else {
                 rest = &rest[1..]; // damaged frame: look for the next one
                 continue;
             };
@@ -83,12 +102,7 @@ impl TsRewrapper {
             self.header(out, AUDIO_PID, 2, index == 0, if full { 0b01 } else { 0b11 });
             if !full {
                 // Adaptation field stuffing fills the last packet.
-                let field = ts::PACKET - 5 - chunk.len();
-                out.push(field as u8);
-                if field > 0 {
-                    out.push(0);
-                    out.extend(std::iter::repeat_n(0xFF, field - 1));
-                }
+                push_stuffing(out, ts::PACKET - 5 - chunk.len());
             }
             out.extend_from_slice(chunk);
         }
@@ -106,27 +120,44 @@ impl TsRewrapper {
     }
 }
 
+/// An adaptation field of `length` bytes after its length byte: no flags,
+/// then 0xFF stuffing.
+fn push_stuffing(out: &mut Vec<u8>, length: usize) {
+    out.push(length as u8);
+    if length > 0 {
+        out.push(0);
+        out.extend(std::iter::repeat_n(0xFF, length - 1));
+    }
+}
+
 /// Skips the ID3v2 tags at the start of `data`, returning the timestamp
-/// found in them, if any, and what follows.
+/// found in them, the last if several, and what follows.
 fn read_id3_tags(mut data: &[u8]) -> (Option<u64>, &[u8]) {
     let mut timestamp = None;
     while data.len() >= 10 && data.starts_with(b"ID3") {
         let version = data[3];
         let footer = if data[5] & 0x10 != 0 { 10 } else { 0 };
         let end = (10 + syncsafe(&data[6..10]) + footer).min(data.len());
-        let mut frames = &data[10..end];
-        while frames.len() >= 10 && frames[0] != 0 {
-            let size = if version >= 4 { syncsafe(&frames[4..8]) } else { u32_be(&frames[4..8]) };
-            let body = &frames[10..(10 + size).min(frames.len())];
-            if &frames[..4] == b"PRIV" && body.len() >= TIMESTAMP_OWNER.len() + 8 && body.starts_with(TIMESTAMP_OWNER) {
-                let value = &body[TIMESTAMP_OWNER.len()..TIMESTAMP_OWNER.len() + 8];
-                timestamp = Some(u64::from_be_bytes(value.try_into().unwrap()) & ((1 << 33) - 1));
-            }
-            frames = &frames[(10 + size).min(frames.len())..];
-        }
+        timestamp = frames_timestamp(&data[10..end], version).or(timestamp);
         data = &data[end..];
     }
     (timestamp, data)
+}
+
+/// The timestamp of the last PRIV frame that carries one among the `frames`
+/// of an ID3v2 tag of `version`.
+fn frames_timestamp(mut frames: &[u8], version: u8) -> Option<u64> {
+    let mut timestamp = None;
+    while frames.len() >= 10 && frames[0] != 0 {
+        let size = if version >= 4 { syncsafe(&frames[4..8]) } else { u32_be(&frames[4..8]) };
+        let body = &frames[10..(10 + size).min(frames.len())];
+        if &frames[..4] == b"PRIV" && body.len() >= TIMESTAMP_OWNER.len() + 8 && body.starts_with(TIMESTAMP_OWNER) {
+            let value = &body[TIMESTAMP_OWNER.len()..TIMESTAMP_OWNER.len() + 8];
+            timestamp = Some(u64::from_be_bytes(value.try_into().unwrap()) & ((1 << 33) - 1));
+        }
+        frames = &frames[(10 + size).min(frames.len())..];
+    }
+    timestamp
 }
 
 fn syncsafe(bytes: &[u8]) -> usize {
@@ -159,14 +190,12 @@ fn section(table: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 fn crc32_mpeg(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for byte in data {
-        crc ^= (*byte as u32) << 24;
-        for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04C1_1DB7 } else { crc << 1 };
-        }
-    }
-    crc
+    data.iter().fold(0xFFFF_FFFFu32, |crc, byte| (0..8).fold(crc ^ ((*byte as u32) << 24), |crc, _| crc_shift(crc)))
+}
+
+/// One bit of the MPEG-2 CRC-32 (polynomial 0x04C11DB7, MSB first).
+fn crc_shift(crc: u32) -> u32 {
+    if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04C1_1DB7 } else { crc << 1 }
 }
 
 #[cfg(test)]
@@ -244,7 +273,7 @@ mod tests {
     #[test]
     fn rejects_segments_it_cannot_time_or_read() {
         let mut rewrapper = TsRewrapper::default();
-        assert!(rewrapper.rewrap(&adts(100)).is_err_and(|e| e.contains("timestamp")));
+        assert_eq!(rewrapper.rewrap(&adts(100)), Err(Error::NoTimestamp));
         let mut ac3 = id3_with_timestamp(0);
         ac3.extend_from_slice(&[0x0B, 0x77, 0, 0, 0, 0, 0, 0]);
         assert!(rewrapper.rewrap(&ac3).is_err());

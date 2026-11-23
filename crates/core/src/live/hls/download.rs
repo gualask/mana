@@ -23,7 +23,7 @@ use super::ts;
 use super::stream::{Chunk, HlsStream, Stop};
 use crate::live::recipe;
 use crate::live::source::Source;
-use crate::live::{Interruption, QualityChoice, Stats};
+use crate::live::{Cause, Interruption, QualityChoice, Stats};
 use crate::log::log;
 use crate::net::{self, Client, loggable};
 
@@ -72,10 +72,10 @@ impl Live {
         stats: Arc<Mutex<Stats>>,
         choice: &QualityChoice,
     ) -> Result<Option<Self>, Interruption> {
-        let failed = |e: String| Interruption::Failed(e);
-        let named = source.named_urls().map_err(failed)?;
-        let client = Client::for_source(source.headers.clone(), &named, source.root_certificate.as_deref()).map_err(failed)?;
-        let mut reader = Downloader::new(client.clone(), "fonte");
+        let named = source.named_urls().map_err(|e| Interruption::Failed(Cause::Source(e)))?;
+        let client = Client::for_source(source.headers.clone(), &named, source.root_certificate.as_deref())
+            .map_err(|e| Interruption::Failed(Cause::Client(e)))?;
+        let mut reader = Downloader::new(client.clone(), "source");
         let Some(master) = master_url(source, &mut reader, stop)? else { return Ok(None) };
         let served = |d: &mut Downloader| served(d.client(), &master, choice, &stats);
         let Some(media) = reader.retry(stop, None, served).map_err(interruption)? else {
@@ -85,8 +85,9 @@ impl Live {
     }
 
     /// Starts downloading the video variant and its audio rendition, from
-    /// the live edge, or the continuous stream, until `stop`.
-    pub fn open(&self, stop: &Stop) -> Result<Streams, String> {
+    /// the live edge, or the continuous stream, until `stop`; fails only
+    /// when a download thread cannot start.
+    pub fn open(&self, stop: &Stop) -> std::io::Result<Streams> {
         match &self.media {
             Media::Playlists { ladder, audio, first } => {
                 let video = ladder.lock().unwrap().current().clone();
@@ -107,11 +108,11 @@ impl Live {
 /// The URL `source` gives, or its recipe ends on; None when stopped.
 fn master_url(source: &Source, reader: &mut Downloader, stop: &Stop) -> Result<Option<Url>, Interruption> {
     if let Some(url) = &source.url {
-        return Url::parse(url).map(Some).map_err(|e| Interruption::Failed(e.to_string()));
+        return Ok(Some(url.clone()));
     }
     let master = run_recipe(reader, &source.resolve, stop).map_err(interruption)?;
     if let Some(master) = &master {
-        log!("fonte risolta: {}", loggable(master));
+        log!("source resolved: {}", loggable(master));
     }
     Ok(master)
 }
@@ -134,7 +135,7 @@ fn follow(
     first: Option<Fetched>,
     ladder: Option<&Arc<Mutex<Ladder>>>,
     stop: &Stop,
-) -> Result<HlsStream, String> {
+) -> std::io::Result<HlsStream> {
     let (sender, queue) = sync_channel(QUEUED_SEGMENTS);
     let mut downloader = Downloader::new(client.clone(), "hls");
     if let Some(ladder) = ladder {
@@ -143,8 +144,7 @@ fn follow(
     let thread_stop = stop.clone();
     std::thread::Builder::new()
         .name("hls".into())
-        .spawn(move || download(&mut downloader, &playlist, first, &sender, &thread_stop))
-        .map_err(|e| e.to_string())?;
+        .spawn(move || download(&mut downloader, &playlist, first, &sender, &thread_stop))?;
     Ok(HlsStream::new(queue, stop.clone()))
 }
 
@@ -165,18 +165,9 @@ fn download(downloader: &mut Downloader, playlist: &Url, first: Option<Fetched>,
 /// own. None when stopped.
 fn run_recipe(reader: &mut Downloader, steps: &[recipe::Step], stop: &Stop) -> Result<Option<Url>, Failure> {
     reader.retry(stop, None, |d| {
-        let mut network = None;
-        recipe::run(steps, |url| {
-            d.client().get(url, playlist::MAX_BYTES).map_err(|e| {
-                let message = e.to_string();
-                network = Some(e);
-                message
-            })
-        })
-        .map_err(|e| match network.take() {
-            Some(network) if network.is_refused() => Failure::Refused(e),
-            Some(_) => Failure::Transient(e),
-            None => Failure::Unsupported(e),
+        recipe::run(steps, |url| d.client().get(url, net::MAX_TEXT_BYTES)).map_err(|e| {
+            let failure = e.network().map_or(Failure::Unsupported as fn(Cause) -> Failure, Failure::of_network);
+            failure(Cause::Recipe(e))
         })
     })
 }
@@ -191,23 +182,23 @@ fn served(client: &Client, master: &Url, choice: &QualityChoice, stats: &Arc<Mut
     let (served, mut body) = client.open(master)?;
     let head = continuous::read_up_to(&mut body, ts::HEAD).map_err(|e| net::read_error(master, &e))?;
     if is_continuous(&head) {
-        log!("ts: flusso MPEG-TS continuo");
+        log!("ts: continuous MPEG-TS stream");
         let first = Mutex::new(Some(continuous::rejoin(head, body)));
         return Ok(Media::Continuous { url: master.clone(), first });
     }
     // Text would have no NUL: an endless answer in another format must not
     // be read up to the bound.
     if !playlist::is_playlist(&head) && head.contains(&0) {
-        return Err(Failure::Unsupported("formato diverso da HLS e MPEG-TS".into()));
+        return Err(playlist::Error::Unsupported(playlist::Unsupported::OtherFormat).into());
     }
     let mut data = head;
-    let rest = playlist::MAX_BYTES.saturating_sub(data.len() as u64);
+    let rest = net::MAX_TEXT_BYTES.saturating_sub(data.len() as u64);
     data.extend(net::read_rest(master, body, rest)?);
     let variants = parse_master(&text(data)?, &served)?;
     // A media playlist: the first opening follows it from this answer.
     let first = variants.media.map(|playlist| Fetched { playlist, at });
     if variants.audio.is_some() {
-        log!("hls: audio in una traccia separata");
+        log!("hls: audio in a rendition of its own");
     }
     let ladder = Ladder::new(variants.video, choice.clone(), stats.clone());
     Ok(Media::Playlists { ladder: Arc::new(Mutex::new(ladder)), audio: variants.audio, first: Mutex::new(first) })

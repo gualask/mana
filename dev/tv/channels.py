@@ -62,7 +62,7 @@ def main():
     result = tv.run(f'cat > {TV_FILE}', stdin=data)
     if result.returncode != 0:
         raise SystemExit(result.stderr.decode(errors='replace'))
-    print(f'{len(lines)} canali con logo diverso copiati in {TV_FILE}')
+    print(f'{len(lines)} channels with a different logo copied to {TV_FILE}')
 
 
 if __name__ == '__main__':

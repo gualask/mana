@@ -2,11 +2,10 @@
 
 use std::path::Path;
 
-use super::Channel;
-use crate::live::source::Source;
+use url::Url;
 
-/// Why an entry without a URL cannot be played.
-pub const NO_URL: &str = "la lista non dà il suo indirizzo";
+use super::{Channel, ChannelError};
+use crate::live::source::Source;
 
 /// The channels of the M3U list at `path`; None when it cannot be read or
 /// lists none.
@@ -64,11 +63,12 @@ impl Entry {
             Some(line) => {
                 let (url, headers) = line.split_once('|').unwrap_or((line, ""));
                 self.headers.extend(kodi_headers(headers));
-                Ok(Source::direct(url.to_string(), self.headers))
+                Url::parse(url).map(|url| Source::direct(url, self.headers)).map_err(|e| ChannelError::BadUrl(e.to_string()))
             }
-            None => Err(NO_URL.to_string()),
+            None => Err(ChannelError::NoStream),
         };
-        Channel { name: self.name, logo: self.logo, group: self.group, play }
+        let name = Some(self.name).filter(|name| !name.is_empty());
+        Channel { name, logo: self.logo, group: self.group, play }
     }
 }
 
@@ -111,57 +111,62 @@ mod tests {
 
     fn channel(name: &str, logo: Option<&str>, url: Option<&str>, headers: &[(&str, &str)]) -> Channel {
         let headers = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
-        let play = url.map(|url| Source::direct(url.into(), headers)).ok_or(NO_URL.to_string());
-        Channel { name: name.into(), logo: logo.map(Into::into), group: None, play }
+        let play = url.map(|url| Source::direct(url.parse().unwrap(), headers)).ok_or(ChannelError::NoStream);
+        Channel { name: Some(name.into()), logo: logo.map(Into::into), group: None, play }
     }
 
     #[test]
     fn names_logos_and_urls_come_from_each_entry() {
         let text = "#EXTM3U\n#EXTINF:-1 tvg-id=\"Rai1.it\" tvg-logo=\"https://logo.invalid/rai1.png\",Rai 1 (1080p)\nhttps://a.invalid/1.m3u8\n\
-                    #EXTINF:-1 tvg-logo=\"\",Senza logo\nhttps://a.invalid/2.m3u8\n\
-                    #EXTINF:-1 group-title=\"Notizie\",Senza URL\n";
+                    #EXTINF:-1 tvg-logo=\"\",No logo\nhttps://a.invalid/2.m3u8\n\
+                    #EXTINF:-1 group-title=\"News\",No URL\n";
         let rai1 = channel("Rai 1 (1080p)", Some("https://logo.invalid/rai1.png"), Some("https://a.invalid/1.m3u8"), &[]);
-        let without_url = Channel { group: Some("Notizie".into()), ..channel("Senza URL", None, None, &[]) };
-        assert_eq!(parse(text), [rai1, channel("Senza logo", None, Some("https://a.invalid/2.m3u8"), &[]), without_url]);
+        let without_url = Channel { group: Some("News".into()), ..channel("No URL", None, None, &[]) };
+        assert_eq!(parse(text), [rai1, channel("No logo", None, Some("https://a.invalid/2.m3u8"), &[]), without_url]);
     }
 
     #[test]
     fn vlc_options_give_the_headers_of_their_entry_only() {
         // As the iptv-org lists write them, with a `&` and a `#` in the referrer.
-        let text = "#EXTM3U\n#EXTINF:-1 http-user-agent=\"HbbTV/1.6.1\",Uno\n#EXTVLCOPT:http-user-agent=HbbTV/1.6.1\n\
+        let text = "#EXTM3U\n#EXTINF:-1 http-user-agent=\"HbbTV/1.6.1\",One
+#EXTVLCOPT:http-user-agent=HbbTV/1.6.1\n\
                     #EXTVLCOPT:network-caching=1000\nhttp://a.invalid/1.m3u8\n\
-                    #EXTINF:-1,Due\n#EXTVLCOPT:http-referrer=https://b.invalid/odeon/#/?playlistId=0&videoId=0\nhttp://a.invalid/2.m3u8\n\
-                    #EXTINF:-1,Tre\nhttp://a.invalid/3.m3u8\n";
+                    #EXTINF:-1,Two
+#EXTVLCOPT:http-referrer=https://b.invalid/odeon/#/?playlistId=0&videoId=0\nhttp://a.invalid/2.m3u8\n\
+                    #EXTINF:-1,Three
+http://a.invalid/3.m3u8\n";
         assert_eq!(
             parse(text),
             [
-                channel("Uno", None, Some("http://a.invalid/1.m3u8"), &[("User-Agent", "HbbTV/1.6.1")]),
+                channel("One", None, Some("http://a.invalid/1.m3u8"), &[("User-Agent", "HbbTV/1.6.1")]),
                 channel(
-                    "Due",
+                    "Two",
                     None,
                     Some("http://a.invalid/2.m3u8"),
                     &[("Referer", "https://b.invalid/odeon/#/?playlistId=0&videoId=0")]
                 ),
-                channel("Tre", None, Some("http://a.invalid/3.m3u8"), &[]),
+                channel("Three", None, Some("http://a.invalid/3.m3u8"), &[]),
             ]
         );
     }
 
     #[test]
     fn headers_after_the_url_are_decoded_and_dropped_from_it() {
-        let text = "#EXTINF:-1,Uno\nhttp://a.invalid/1.m3u8|User-Agent=Mozilla%2F5.0%20(X11)&Referer=https%3A%2F%2Fb.invalid%2F%3Fa%3D1%26b%3D2\n\
-                    #EXTINF:-1,Due\nhttp://a.invalid/2.m3u8?x=1|User-Agent=VLC/3.0|referrer=https://c.invalid/\n";
+        let text = "#EXTINF:-1,One
+http://a.invalid/1.m3u8|User-Agent=Mozilla%2F5.0%20(X11)&Referer=https%3A%2F%2Fb.invalid%2F%3Fa%3D1%26b%3D2\n\
+                    #EXTINF:-1,Two
+http://a.invalid/2.m3u8?x=1|User-Agent=VLC/3.0|referrer=https://c.invalid/\n";
         assert_eq!(
             parse(text),
             [
                 channel(
-                    "Uno",
+                    "One",
                     None,
                     Some("http://a.invalid/1.m3u8"),
                     &[("User-Agent", "Mozilla/5.0 (X11)"), ("Referer", "https://b.invalid/?a=1&b=2")]
                 ),
                 channel(
-                    "Due",
+                    "Two",
                     None,
                     Some("http://a.invalid/2.m3u8?x=1"),
                     &[("User-Agent", "VLC/3.0"), ("Referer", "https://c.invalid/")]

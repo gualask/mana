@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{Backend, Formats, OpenBackend};
+use super::{Backend, BackendError, Formats, OpenBackend};
 
 /// What the fake backends opened by one `open` received, in order.
 #[derive(Clone, Default, Debug)]
@@ -15,9 +15,9 @@ pub struct Fed {
     /// Feeds still to refuse as if the buffer were full.
     pub refuse: u32,
     /// Opening a backend fails with this, when set.
-    pub open_error: Option<String>,
+    pub open_error: Option<BackendError>,
     /// Feeding fails with this, when set: a decoder gone wrong.
-    pub feed_error: Option<String>,
+    pub feed_error: Option<BackendError>,
     /// Calls to pause (true) and resume (false), in order.
     pub pauses: Vec<bool>,
 }
@@ -45,7 +45,7 @@ pub fn open() -> (OpenBackend, Arc<Mutex<Fed>>) {
 
 impl Fake {
     /// Whether to take the packet, after the refusals and failures asked for.
-    fn take(&self) -> Result<bool, String> {
+    fn take(&self) -> Result<bool, BackendError> {
         let mut fed = self.fed.lock().unwrap();
         if let Some(error) = fed.feed_error.clone() {
             return Err(error);
@@ -59,12 +59,12 @@ impl Fake {
 }
 
 impl Backend for Fake {
-    fn load(&mut self, formats: &Formats) -> Result<(), String> {
+    fn load(&mut self, formats: &Formats) -> Result<(), BackendError> {
         self.fed.lock().unwrap().loads.push(*formats);
         Ok(())
     }
 
-    fn feed_video(&mut self, _data: &[u8], pts_ns: i64) -> Result<bool, String> {
+    fn feed_video(&mut self, _data: &[u8], pts_ns: i64) -> Result<bool, BackendError> {
         if !self.take()? {
             return Ok(false);
         }
@@ -76,7 +76,7 @@ impl Backend for Fake {
         Ok(true)
     }
 
-    fn feed_audio(&mut self, _data: &[u8], pts_ns: i64) -> Result<bool, String> {
+    fn feed_audio(&mut self, _data: &[u8], pts_ns: i64) -> Result<bool, BackendError> {
         if !self.take()? {
             return Ok(false);
         }

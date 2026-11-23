@@ -2,12 +2,12 @@
 //! MPEG-TS stream served in place of a playlist.
 
 mod continuous;
-mod decrypt;
+pub(in crate::live) mod decrypt;
 mod download;
 mod downloader;
 mod ladder;
-mod packed_audio;
-mod playlist;
+pub(in crate::live) mod packed_audio;
+pub(in crate::live) mod playlist;
 mod progress;
 mod segment;
 mod stream;

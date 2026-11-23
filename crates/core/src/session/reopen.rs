@@ -7,11 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::stats::Shared;
 use super::Program;
+use super::stats::{Failure, Shared};
 use crate::live::hls::{self, Live};
 use crate::live::source::{self, Source};
-use crate::live::{Interruption, QualityChoice};
+use crate::live::{Cause, Interruption, QualityChoice, Stall};
 use crate::log::log;
 use crate::playback::demux::Demux;
 use crate::playback::feeder::{self, Ended};
@@ -31,29 +31,46 @@ const REOPEN_WINDOW: Duration = Duration::from_secs(300);
 #[derive(Debug, PartialEq)]
 enum Next {
     /// The source ended, or cannot be played.
-    End(Result<(), String>),
-    /// Open it again from the live edge; `budgeted` failures count against
-    /// MAX_REOPENINGS.
-    Reopen { reason: String, budgeted: bool },
+    End(Result<(), Failure>),
+    /// Open it again from the live edge.
+    Reopen(Reopening),
     /// Resolve it again, then open it: its token was refused.
-    Resolve(String),
+    Resolve(Cause),
+}
+
+/// Why a live source is opened again.
+#[derive(Debug, PartialEq)]
+enum Reopening {
+    Stuck(Stall),
+    /// So long without data.
+    Starved(Duration),
+    /// Playback failed: these count against MAX_REOPENINGS.
+    Failed(playback::Error),
+}
+
+impl std::fmt::Display for Reopening {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Stuck(stall) => write!(f, "{stall}"),
+            Self::Starved(idle) => write!(f, "{} s without data", idle.as_secs()),
+            Self::Failed(error) => write!(f, "{error}"),
+        }
+    }
 }
 
 /// The policy, in one place: how an opening ended, by live's account first
 /// (its interruption stops playback too), then by playback's.
 fn next(interruption: Option<Interruption>, ended: Result<Ended, playback::Error>) -> Next {
     match (interruption, ended) {
-        (Some(Interruption::Refused(reason)), _) => Next::Resolve(reason),
-        (Some(Interruption::Stuck(reason)), _) => Next::Reopen { reason, budgeted: false },
+        (Some(Interruption::Refused(cause)), _) => Next::Resolve(cause),
+        (Some(Interruption::Stuck(stall)), _) => Next::Reopen(Reopening::Stuck(stall)),
         (Some(interruption @ (Interruption::Unsupported(_) | Interruption::Failed(_))), _) => {
-            Next::End(Err(interruption.to_string()))
+            Next::End(Err(Failure::Live(interruption)))
         }
         (None, Ok(Ended::Done)) => Next::End(Ok(())),
-        (None, Ok(Ended::Retune(idle))) => {
-            Next::Reopen { reason: format!("{} s senza dati", idle.as_secs()), budgeted: false }
-        }
-        (None, Err(playback::Error::Unsupported(reason))) => Next::End(Err(reason)),
-        (None, Err(playback::Error::Failed(reason))) => Next::Reopen { reason, budgeted: true },
+        (None, Ok(Ended::Retune(idle))) => Next::Reopen(Reopening::Starved(idle)),
+        (None, Err(error)) if error.is_unsupported() => Next::End(Err(error.into())),
+        (None, Err(error)) => Next::Reopen(Reopening::Failed(error)),
     }
 }
 
@@ -83,19 +100,19 @@ pub(super) fn run(
     stop: &Arc<AtomicBool>,
     shared: &Shared,
     quality: &QualityChoice,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let loaded;
     let source = match program {
         Program::Live(source) => source,
         // A `.stream` file describes a live HLS stream.
         Program::Path(path) if path.extension().is_some_and(|e| e == source::EXTENSION) => {
-            loaded = Source::load(path)?;
+            loaded = Source::load(path).map_err(Failure::Source)?;
             &loaded
         }
         // Anything else is a local file, which can loop.
-        Program::Path(path) => return play_file(path, settings, open, stop, &shared.playback),
+        Program::Path(path) => return Ok(play_file(path, settings, open, stop, &shared.playback)?),
     };
-    log!("diretta {}", source.describe());
+    log!("live {}", source.describe());
     play_source(source, settings, open, stop, shared, quality)
 }
 
@@ -108,7 +125,7 @@ fn play_source(
     stop: &Arc<AtomicBool>,
     shared: &Shared,
     quality: &QualityChoice,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let mut budget = Budget::default();
     let mut live = resolve(source, stop, shared, quality, &mut budget)?;
     while let Some(opened) = &live {
@@ -122,7 +139,7 @@ fn play_source(
         }
         match charge(next(source_stop.interruption(), ended), &mut budget) {
             Next::End(result) => return result,
-            Next::Reopen { .. } => {}
+            Next::Reopen(_) => {}
             Next::Resolve(_) => live = resolve(source, stop, shared, quality, &mut budget)?,
         }
     }
@@ -138,14 +155,14 @@ fn resolve(
     shared: &Shared,
     quality: &QualityChoice,
     budget: &mut Budget,
-) -> Result<Option<Live>, String> {
+) -> Result<Option<Live>, Failure> {
     loop {
-        let reason = match Live::resolve(source, &hls::Stop::resolving(stop), shared.live.clone(), quality) {
+        let cause = match Live::resolve(source, &hls::Stop::resolving(stop), shared.live.clone(), quality) {
             Ok(live) => return Ok(live),
-            Err(Interruption::Refused(reason)) => reason,
-            Err(other) => return Err(other.to_string()),
+            Err(Interruption::Refused(cause)) => cause,
+            Err(other) => return Err(Failure::Live(other)),
         };
-        if let Next::End(result) = charge(Next::Resolve(reason), budget) {
+        if let Next::End(result) = charge(Next::Resolve(cause), budget) {
             return result.map(|()| None);
         }
     }
@@ -157,23 +174,23 @@ fn resolve(
 fn charge(outcome: Next, budget: &mut Budget) -> Next {
     match outcome {
         Next::End(_) => outcome,
-        Next::Reopen { ref reason, budgeted: false } => {
-            log!("diretta riaperta dal bordo live: {reason}");
+        Next::Reopen(Reopening::Failed(error)) => match budget.spend() {
+            Some(spent) => {
+                log!("live reopened from the live edge after an error ({spent}/{MAX_REOPENINGS}): {error}");
+                Next::Reopen(Reopening::Failed(error))
+            }
+            None => Next::End(Err(error.into())),
+        },
+        Next::Reopen(ref reason) => {
+            log!("live reopened from the live edge: {reason}");
             outcome
         }
-        Next::Reopen { reason, budgeted: true } => match budget.spend() {
+        Next::Resolve(cause) => match budget.spend() {
             Some(spent) => {
-                log!("diretta riaperta dal bordo live dopo un errore ({spent}/{MAX_REOPENINGS}): {reason}");
-                Next::Reopen { reason, budgeted: true }
+                log!("source to resolve again ({spent}/{MAX_REOPENINGS}): {cause}");
+                Next::Resolve(cause)
             }
-            None => Next::End(Err(reason)),
-        },
-        Next::Resolve(reason) => match budget.spend() {
-            Some(spent) => {
-                log!("fonte da risolvere di nuovo ({spent}/{MAX_REOPENINGS}): {reason}");
-                Next::Resolve(reason)
-            }
-            None => Next::End(Err(format!("fonte rifiutata anche dopo {MAX_REOPENINGS} nuove risoluzioni: {reason}"))),
+            None => Next::End(Err(Failure::RefusedAgain(cause))),
         },
     }
 }
@@ -185,11 +202,12 @@ fn play_file(
     open: &OpenBackend,
     stop: &AtomicBool,
     stats: &Mutex<playback::Stats>,
-) -> Result<(), String> {
-    let reader = Reader::start(Demux::new(Media::open(path)?, None), settings.loop_playback).map_err(|e| e.to_string())?;
+) -> Result<(), playback::Error> {
+    let media = Media::open(path).map_err(playback::Error::Demuxer)?;
+    let reader = Reader::start(Demux::new(media, None), settings.loop_playback)?;
     let ended = feeder::play(&reader, false, open, settings, stop, stats);
     reader.finish();
-    ended.map_err(|e| e.to_string())?;
+    ended?;
     Ok(())
 }
 
@@ -201,9 +219,9 @@ fn play_live(
     stop: &AtomicBool,
     stats: &Mutex<playback::Stats>,
 ) -> Result<Ended, playback::Error> {
-    let streams = live.open(source_stop)?;
-    let main = Media::open_stream(Box::new(streams.main))?;
-    let audio = streams.audio.map(|a| Media::open_stream(Box::new(a))).transpose()?;
+    let streams = live.open(source_stop).map_err(|e| playback::Error::Thread(e.to_string()))?;
+    let main = Media::open_stream(Box::new(streams.main)).map_err(playback::Error::Demuxer)?;
+    let audio = streams.audio.map(|a| Media::open_stream(Box::new(a))).transpose().map_err(playback::Error::Demuxer)?;
     let reader = Reader::start(Demux::new(main, audio), false)?;
     let ended = feeder::play(&reader, true, open, settings, stop, stats);
     // The reader may be waiting on the downloads for data: they stop first.
@@ -215,27 +233,51 @@ fn play_live(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language::{Language, Localized};
+    use crate::net;
+    use url::Url;
+
+    /// A cause of a refused token, as a refused answer gives it.
+    fn refused() -> Cause {
+        Cause::Network(net::Error::empty(&Url::parse("https://a.invalid/x").unwrap()))
+    }
 
     #[test]
     fn live_interruptions_come_first() {
-        let refused = Some(Interruption::Refused("HTTP 403 per /x".into()));
-        assert_eq!(next(refused, Ok(Ended::Done)), Next::Resolve("HTTP 403 per /x".into()));
-        let stuck = Some(Interruption::Stuck("ferma".into()));
-        let failing = Err(playback::Error::Failed("fermato".into()));
-        assert_eq!(next(stuck, failing), Next::Reopen { reason: "ferma".into(), budgeted: false });
-        let unsupported = Some(Interruption::Unsupported("segmenti con BYTERANGE".into()));
-        assert_eq!(next(unsupported, Ok(Ended::Done)), Next::End(Err("non supportato: segmenti con BYTERANGE".into())));
+        assert_eq!(next(Some(Interruption::Refused(refused())), Ok(Ended::Done)), Next::Resolve(refused()));
+        let stall = Stall { idle: Duration::from_secs(8), last: 15, expected: 16 };
+        let failing = Err(playback::Error::DemuxerGone);
+        assert_eq!(next(Some(Interruption::Stuck(stall.clone())), failing), Next::Reopen(Reopening::Stuck(stall)));
+        let unsupported = Interruption::Unsupported(Cause::KeyLength);
+        let ended = next(Some(unsupported.clone()), Ok(Ended::Done));
+        assert_eq!(ended, Next::End(Err(Failure::Live(unsupported))));
+        let Next::End(Err(failure)) = ended else { unreachable!() };
+        assert_eq!(failure.text(Language::Italian), "non supportato: chiave AES-128 non di 16 byte");
     }
 
     #[test]
     fn playback_failures_reopen_unless_unsupported() {
         assert_eq!(next(None, Ok(Ended::Done)), Next::End(Ok(())));
         let starved = next(None, Ok(Ended::Retune(Duration::from_secs(12))));
-        assert_eq!(starved, Next::Reopen { reason: "12 s senza dati".into(), budgeted: false });
-        let frozen = next(None, Err(playback::Error::Failed("bloccato".into())));
-        assert_eq!(frozen, Next::Reopen { reason: "bloccato".into(), budgeted: true });
-        let codec = next(None, Err(playback::Error::Unsupported("codec video non supportato".into())));
-        assert_eq!(codec, Next::End(Err("codec video non supportato".into())));
+        assert_eq!(starved, Next::Reopen(Reopening::Starved(Duration::from_secs(12))));
+        assert_eq!(Reopening::Starved(Duration::from_secs(12)).to_string(), "12 s without data");
+        let frozen = next(None, Err(playback::Error::DecoderWontResume));
+        assert_eq!(frozen, Next::Reopen(Reopening::Failed(playback::Error::DecoderWontResume)));
+        let codec = playback::Error::VideoCodec(Some("mpeg2video 720×576".into()));
+        assert_eq!(next(None, Err(codec.clone())), Next::End(Err(Failure::Playback(codec))));
+    }
+
+    #[test]
+    fn past_the_budget_a_failure_ends_playback() {
+        let mut budget = Budget::default();
+        for _ in 0..MAX_REOPENINGS {
+            assert!(matches!(charge(Next::Resolve(refused()), &mut budget), Next::Resolve(_)));
+        }
+        assert_eq!(charge(Next::Resolve(refused()), &mut budget), Next::End(Err(Failure::RefusedAgain(refused()))));
+        let error = playback::Error::DecoderWontResume;
+        assert_eq!(charge(Next::Reopen(Reopening::Failed(error.clone())), &mut budget), Next::End(Err(error.into())));
+        let starved = Next::Reopen(Reopening::Starved(Duration::from_secs(12)));
+        assert_eq!(charge(starved, &mut budget), Next::Reopen(Reopening::Starved(Duration::from_secs(12))));
     }
 
     #[test]

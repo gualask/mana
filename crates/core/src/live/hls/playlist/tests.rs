@@ -93,7 +93,7 @@ fn segments_are_dated_from_the_last_program_date_time() {
     assert_eq!(parse_date("2026-11-21T09:30:00.500-0030"), Some(1_795_255_200.5));
     assert_eq!(parse_date("2000-02-29T00:00:00Z"), Some(951_782_400.0));
     assert_eq!(parse_date("2026-13-01T00:00:00Z"), None);
-    assert_eq!(parse_date("ieri"), None);
+    assert_eq!(parse_date("yesterday"), None);
     let base = Url::parse("https://lab.invalid/index.m3u8").unwrap();
     let text = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\na.ts\n\
         #EXT-X-PROGRAM-DATE-TIME:1970-01-01T00:01:00Z\n#EXTINF:2,\nb.ts\n#EXTINF:1.5,\nc.ts\n#EXTINF:2,\nd.ts\n";

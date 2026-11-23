@@ -110,7 +110,8 @@ The split of the recipes and a synthetic example are described in the
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |
 | `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; device identifier | List formats and their lifecycle |
 | `net` | TLS and roots, timeouts, User-Agent, responses rejected beyond the limit set by the reader (playlists, keys and segments in `live::hls`), URLs without tokens in the log; headers and CA of the single source, with credentials sent only to the origins the source names; maximum length of a value in a request line (`MAX_LINE_VALUE`), for URLs and headers | HTTP transport |
-| `apps/tv` | Composition, screens, SDL, Starfish backend, settings file, page for the phone, automated trials | Remote control, screens and webOS integration |
+| `language` | English and Italian: the language in use, from the viewer's choice kept in the data folder, else the TV's locale code, else English; the Fluent catalogs with every text the apps show (`en.ftl`, `it.ftl`, built into the binary) and `text!`, which reads them; `Localized`, which every error shown on a screen implements, each in the module that owns it, its `Display` the English text for the log | Languages of the interface and their texts |
+| `apps/tv` | Composition, screens (their texts in the core's catalogs), SDL, Starfish backend, reading the TV's locale (luna on webOS, `LC_ALL`, `LC_MESSAGES` or `LANG` on the desktop build), settings file, page for the phone, automated trials | Remote control, screens and webOS integration |
 
 Decisions on reopening and new resolution belong to `session`
 ([reopen.rs](../crates/core/src/session/reopen.rs)): `live` reports typed
@@ -138,8 +139,15 @@ apps → session → live → playback (Input port only)
              → playback
 apps → playback (Backend port), catalog, net
 catalog → live (source, recipe), net
-apps, catalog, live, playback, session → log; live → net
+apps, catalog, live, net, playback, session → language
+apps, catalog, language, live, playback, session → log
+live → net
+live, playback → adts
 ```
+
+`net` and `language` are below the other modules: `net` depends on
+`language` only because its errors reach the screens, and `log` depends on
+nothing.
 
 No core module imports an app. The core has no `cfg(webos)` and no Unix-only
 code: the platform is decided by `apps/tv/build.rs`, while the core's
@@ -165,20 +173,21 @@ crates/core/                # mana-core: no UI and no platform dependency
   src/
     session/                # viewing, reopening (reopen.rs), viewing state and merged statistics (stats.rs)
     live/                   # source.rs, recipe.rs, hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
-    playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper and shim.c), fake.rs for the tests
+    playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), device identifier
+    language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
     net.rs, log.rs, adts.rs
 apps/
   tv/                       # mana-tv, binary `mana`
     build.rs                # cfg(webos), crash.c, linker arguments of the binary
     src/
       main.rs               # composition and event loop
-      screens/              # home screen (home.rs), Settings (setup.rs), arrival of the list (list_updates.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos, pointer zones
+      screens/              # home screen (home.rs), Settings (setup.rs), language in use (language.rs), arrival of the list (list_updates.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos, pointer zones
       phone/                # page served to the phone while Settings is open: server, minimal HTTP, HTML
       palette.rs            # colours of the screens and of the page
-      platform/             # SDL, keys, Magic Remote pointer, CPU AES instructions, Starfish backend, data folder
+      platform/             # SDL, keys, Magic Remote pointer, TV locale (locale.rs), CPU AES instructions, Starfish backend, data folder
       settings.rs           # mana.conf in the data folder, then /tmp/mana.conf
-      autotest.rs           # automatic start, zapping, interface trial, frames
+      autotest.rs           # automatic start, zapping, interface trial; frame statistics in autotest/frames.rs
   desktop/                  # mana-desktop, to be built: Rune UI and desktop backend
 ```
 

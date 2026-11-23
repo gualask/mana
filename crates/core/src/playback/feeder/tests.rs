@@ -8,7 +8,7 @@ const ADTS: [u8; 16] = [0xFF, 0xF1, 0x4C, 0x80, 0x02, 0x1F, 0xFC, 0, 0, 0, 0, 0,
 
 /// Runs `test` on a feeder loaded on the fake backend; returns what the
 /// backend received.
-fn run(test: impl FnOnce(&mut Feeder, &Mutex<Fed>) -> Result<(), String>) -> Fed {
+fn run(test: impl FnOnce(&mut Feeder, &Mutex<Fed>) -> Result<(), Error>) -> Fed {
     let (open, fed) = fake::open();
     let (settings, stop, stats) = (Settings::default(), AtomicBool::new(false), Mutex::new(Stats::default()));
     let mut feeder = Feeder::start(&open, &settings, &stop, &stats, FORMATS).unwrap();
@@ -20,10 +20,10 @@ fn run(test: impl FnOnce(&mut Feeder, &Mutex<Fed>) -> Result<(), String>) -> Fed
 #[test]
 fn no_backend_to_open_is_not_worth_reopening() {
     let (open, fed) = fake::open();
-    fed.lock().unwrap().open_error = Some("riproduzione disponibile solo sulla TV".into());
+    fed.lock().unwrap().open_error = Some(BackendError::Unavailable);
     let (settings, stop, stats) = (Settings::default(), AtomicBool::new(false), Mutex::new(Stats::default()));
     let started = Feeder::start(&open, &settings, &stop, &stats, FORMATS);
-    assert!(matches!(started, Err(Error::Unsupported(_))));
+    assert!(matches!(started, Err(Error::NoDecoder(BackendError::Unavailable))));
 }
 
 #[test]

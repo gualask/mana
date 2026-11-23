@@ -3,13 +3,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::live::Quality;
+use super::reopen::MAX_REOPENINGS;
+use crate::language::{Language, Localized, display_in_english};
+use crate::live::source;
+use crate::live::{Cause, Interruption, Quality};
 use crate::playback::Phase;
 use crate::{live, playback};
+use crate::text;
 
-/// Where a viewing is. It reads in the log as `avvio`, `riproduzione`,
-/// `fine`, `fermato` or `errore: …`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Where a viewing is.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum State {
     /// Before its decoder is loaded.
     #[default]
@@ -20,7 +23,7 @@ pub enum State {
     /// Ended without an error: at its end, or stopped.
     Stopped,
     /// Ended by this error.
-    Failed(String),
+    Failed(Failure),
 }
 
 impl State {
@@ -29,17 +32,53 @@ impl State {
     }
 }
 
-impl std::fmt::Display for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Localized for State {
+    fn text(&self, language: Language) -> String {
         match self {
-            Self::Starting => f.write_str("avvio"),
-            Self::Playing => f.write_str("riproduzione"),
-            Self::Ending => f.write_str("fine"),
-            Self::Stopped => f.write_str("fermato"),
-            Self::Failed(error) => write!(f, "errore: {error}"),
+            Self::Starting => text!(language, "state-starting"),
+            Self::Playing => text!(language, "state-playing"),
+            Self::Ending => text!(language, "state-ending"),
+            Self::Stopped => text!(language, "state-stopped"),
+            Self::Failed(failure) => text!(language, "state-failed", failure = failure.text(language)),
         }
     }
 }
+
+/// Why a viewing ended, or could not start.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Failure {
+    /// A `.stream` file that cannot be used.
+    Source(source::Error),
+    /// The live source stopped, and opening it again cannot help.
+    Live(Interruption),
+    Playback(playback::Error),
+    /// The source's token was refused after every new resolution allowed.
+    RefusedAgain(Cause),
+    /// The viewing's thread could not start, as the system says.
+    Thread(String),
+}
+
+impl From<playback::Error> for Failure {
+    fn from(error: playback::Error) -> Self {
+        Self::Playback(error)
+    }
+}
+
+impl Localized for Failure {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Source(error) => error.text(language),
+            Self::Live(interruption) => interruption.text(language),
+            Self::Playback(error) => error.text(language),
+            Self::RefusedAgain(cause) => {
+                text!(language, "live-refused-again", count = MAX_REOPENINGS, cause = cause.text(language))
+            }
+            Self::Thread(detail) => detail.clone(),
+        }
+    }
+}
+
+display_in_english!(State, Failure);
 
 #[derive(Clone, Default, Debug)]
 pub struct Stats {

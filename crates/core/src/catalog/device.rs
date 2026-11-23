@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use crate::log::log;
 
 /// The file in the data directory that keeps it.
-const FILE: &str = "dispositivo";
+const FILE: &str = "device";
 
 pub struct Device {
     dir: PathBuf,
@@ -37,14 +37,14 @@ impl Device {
     fn create(&self) -> Option<String> {
         let mut bytes = [0; 16];
         if let Err(error) = getrandom::getrandom(&mut bytes) {
-            log!("identificativo del dispositivo non creato: {error}");
+            log!("device identifier not created: {error}");
             return None;
         }
         let id = uuid_v4(bytes);
         let kept = std::fs::create_dir_all(&self.dir).and_then(|()| std::fs::write(self.dir.join(FILE), &id));
         match kept {
-            Ok(()) => log!("nuovo identificativo del dispositivo"),
-            Err(error) => log!("identificativo del dispositivo solo per questa sessione: {error}"),
+            Ok(()) => log!("new device identifier"),
+            Err(error) => log!("device identifier for this session only: {error}"),
         }
         Some(id)
     }

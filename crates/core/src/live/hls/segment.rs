@@ -9,6 +9,7 @@ use super::decrypt::{self, Key};
 use super::downloader::Failure;
 use super::packed_audio::{TsRewrapper, is_packed_audio};
 use super::playlist::Segment;
+use crate::live::Cause;
 use crate::net::Client;
 
 /// What a segment, or an initialization section, may unpack to: 10 s at
@@ -34,10 +35,10 @@ impl Segments {
             // Without an explicit IV, HLS uses the media sequence number.
             let iv = key.iv.unwrap_or_else(|| (segment.sequence as u128).to_be_bytes());
             decrypt::decrypt(&key_bytes, &iv, &mut data)
-                .map_err(|e| Failure::Transient(format!("decifratura AES-128 fallita: {e}")))?;
+                .map_err(|e| Failure::Transient(Cause::Decryption(e)))?;
         }
         if is_packed_audio(&data) {
-            data = self.packed.rewrap(&data).map_err(Failure::Unsupported)?;
+            data = self.packed.rewrap(&data).map_err(|e| Failure::Unsupported(Cause::PackedAudio(e)))?;
         }
         Ok(data)
     }
@@ -50,7 +51,7 @@ impl Segments {
         let key: Key = client
             .get(url, size_of::<Key>() as u64)?
             .try_into()
-            .map_err(|_| Failure::Transient("chiave AES-128 non di 16 byte".into()))?;
+            .map_err(|_| Failure::Transient(Cause::KeyLength))?;
         self.keys.insert(url.clone(), key);
         Ok(key)
     }

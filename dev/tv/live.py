@@ -52,7 +52,7 @@ def main():
     result = Tv().run(f'mkdir -p {TV_CLIPS_DIR} && tar xf - -C {TV_CLIPS_DIR}', stdin=archive.getvalue())
     if result.returncode != 0:
         raise SystemExit(result.stderr.decode(errors='replace'))
-    print(f"{', '.join(sorted(f for f in files if f.endswith('.stream')))} copiati in {TV_CLIPS_DIR}")
+    print(f"{', '.join(sorted(f for f in files if f.endswith('.stream')))} copied to {TV_CLIPS_DIR}")
 
 
 if __name__ == '__main__':

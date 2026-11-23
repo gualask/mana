@@ -11,12 +11,13 @@ use mana_core::session::STREAM_EXTENSION;
 use crate::platform::keys::Action;
 use crate::screens::App;
 use crate::settings;
+use frames::{FrameStats, memory};
+
+mod frames;
 
 /// Holds the file name of a clip, or the name of a channel of the list, to
 /// play at startup, so tests can run unattended.
 const AUTOPLAY_FILE: &str = "/tmp/mana-autoplay";
-/// Frame statistics are logged this often while the channel list is open.
-const FRAME_REPORT: Duration = Duration::from_secs(5);
 /// Interface test: holding Down (remote key repeat), paging with Right,
 /// then the list left open without keys, as (end of phase in s, key,
 /// presses per second).
@@ -70,7 +71,7 @@ impl UiTest {
             app.handle(action);
         }
         if elapsed >= end {
-            log!("prova interfaccia: fase {} finita, {} passi", self.phase + 1, self.presses);
+            log!("interface test: phase {} done, {} steps", self.phase + 1, self.presses);
             self.phase += 1;
             self.presses = 0;
         }
@@ -90,15 +91,6 @@ struct Zapping {
     stopping: bool,
 }
 
-/// Draw times and intervals between frames, with CPU and memory.
-struct FrameStats {
-    draw_us: Vec<u64>,
-    gap_us: u64,
-    last_frame: Option<Instant>,
-    since: Instant,
-    cpu_ticks: u64,
-}
-
 impl Autotest {
     /// Plays the clip or channel named in AUTOPLAY_FILE, if any, and starts
     /// the tests the settings ask for.
@@ -109,15 +101,15 @@ impl Autotest {
         if !play_named(app, name) {
             return autotest;
         }
-        log!("avvio automatico di {name}");
+        log!("automatic start of {name}");
         let options = settings::load().tests;
         if options.ui_test {
             let channels = app.channels();
-            log!("prova interfaccia: {} canali, {} con logo, memoria {}", channels.len(), channels.with_logos(), memory());
+            log!("interface test: {} channels, {} with a logo, memory {}", channels.len(), channels.with_logos(), memory());
             autotest.ui_test = Some(UiTest { started: Instant::now(), presses: 0, phase: 0 });
         }
         if options.zap_count > 0 {
-            log!("zapping: {} cambi ogni {} ms, memoria {}", options.zap_count, options.zap_interval_ms, memory());
+            log!("zapping: {} changes every {} ms, memory {}", options.zap_count, options.zap_interval_ms, memory());
             autotest.zapping = Some(Zapping::new(&options));
         }
         autotest
@@ -143,7 +135,7 @@ impl Autotest {
         }
         let logos = app.logos();
         self.frames.get_or_insert_with(FrameStats::new).record(draw, || {
-            format!("loghi caricati {}, in memoria {}, falliti {}", logos.loaded, logos.resident(), logos.failed)
+            format!("logos loaded {}, in memory {}, failed {}", logos.loaded, logos.resident(), logos.failed)
         });
     }
 
@@ -155,7 +147,7 @@ impl Autotest {
         }
         // Without playback the same keys act on the clip list instead.
         if !app.is_playing() {
-            log!("prova interfaccia interrotta: nessuna riproduzione");
+            log!("interface test stopped: nothing playing");
             self.ui_test = None;
             return;
         }
@@ -163,7 +155,7 @@ impl Autotest {
             app.handle(Action::Select);
         }
         let Some(&phase) = UI_TEST_PHASES.get(test.phase) else {
-            log!("prova interfaccia finita, memoria {}", memory());
+            log!("interface test done, memory {}", memory());
             app.handle(Action::Back);
             self.ui_test = None;
             return;
@@ -178,7 +170,7 @@ impl Autotest {
             return;
         }
         if zapping.remaining == 0 {
-            log!("zapping finito, memoria {}", memory());
+            log!("zapping done, memory {}", memory());
             self.zapping = None;
             return;
         }
@@ -206,11 +198,11 @@ impl Zapping {
     fn observe(&mut self, app: &App) {
         if !self.first_frame_logged && app.stats().is_some_and(|s| s.playback.presented_ms.is_some()) {
             self.first_frame_logged = true;
-            log!("cambio {}: primo fotogramma dopo {} ms", self.number, self.switched_at.elapsed().as_millis());
+            log!("change {}: first frame after {} ms", self.number, self.switched_at.elapsed().as_millis());
         }
         if self.stopping && !app.is_stopping() {
             self.stopping = false;
-            log!("cambio {}: canale precedente fermato dopo {} ms, memoria {}", self.number, self.switched_at.elapsed().as_millis(), memory());
+            log!("change {}: previous channel stopped after {} ms, memory {}", self.number, self.switched_at.elapsed().as_millis(), memory());
         }
     }
 
@@ -224,7 +216,7 @@ impl Zapping {
         self.number += 1;
         self.first_frame_logged = false;
         app.play_clip(next);
-        log!("cambio {}: tasto gestito in {} ms", self.number, self.switched_at.elapsed().as_millis());
+        log!("change {}: key handled in {} ms", self.number, self.switched_at.elapsed().as_millis());
     }
 }
 
@@ -248,67 +240,4 @@ fn play_named(app: &mut App, name: &str) -> bool {
     } else {
         false
     }
-}
-
-impl FrameStats {
-    fn new() -> Self {
-        Self { draw_us: Vec::new(), gap_us: 0, last_frame: None, since: Instant::now(), cpu_ticks: cpu_ticks() }
-    }
-
-    /// `extra` adds to the periodic report.
-    fn record(&mut self, draw: Duration, extra: impl FnOnce() -> String) {
-        let now = Instant::now();
-        if let Some(last) = self.last_frame {
-            self.gap_us = self.gap_us.max(now.duration_since(last).as_micros() as u64);
-        }
-        self.last_frame = Some(now);
-        self.draw_us.push(draw.as_micros() as u64);
-        if self.since.elapsed() >= FRAME_REPORT {
-            self.report(extra());
-        }
-    }
-
-    /// Logs the frames since the last report, with CPU and memory, and
-    /// starts counting again.
-    fn report(&mut self, extra: String) {
-        let seconds = self.since.elapsed().as_secs_f64();
-        let ticks = cpu_ticks();
-        // Linux counts CPU time in ticks of 1/100 s.
-        let cpu = (ticks - self.cpu_ticks) as f64 / 100.0 / seconds * 100.0;
-        self.draw_us.sort_unstable();
-        let percentile = |p: usize| self.draw_us[(self.draw_us.len() - 1) * p / 100] as f64 / 1000.0;
-        log!(
-            "fotogrammi: {:.0}/s, disegno mediano {:.1} ms, p95 {:.1} ms, max {:.1} ms, pausa max {:.0} ms, CPU {:.0}% di un core, memoria {}, {}",
-            self.draw_us.len() as f64 / seconds,
-            percentile(50),
-            percentile(95),
-            percentile(100),
-            self.gap_us as f64 / 1000.0,
-            cpu,
-            memory(),
-            extra
-        );
-        *self = Self { cpu_ticks: ticks, ..Self::new() };
-    }
-}
-
-/// User plus system CPU time of this process, in clock ticks.
-fn cpu_ticks() -> u64 {
-    std::fs::read_to_string("/proc/self/stat")
-        .ok()
-        .and_then(|stat| {
-            // Fields after the parenthesised command name; utime and stime
-            // are the 12th and 13th of them.
-            let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
-            Some(fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?)
-        })
-        .unwrap_or(0)
-}
-
-/// Resident memory of this process, from /proc on Linux.
-fn memory() -> String {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|status| status.lines().find(|l| l.starts_with("VmRSS:")).map(|l| l[6..].trim().to_string()))
-        .unwrap_or_else(|| "?".into())
 }

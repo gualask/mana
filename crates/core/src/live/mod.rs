@@ -3,6 +3,11 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+
+use crate::language::{Language, Localized, display_in_english};
+use crate::net;
+use crate::text;
 
 pub mod hls;
 pub mod recipe;
@@ -40,7 +45,7 @@ impl std::str::FromStr for Quality {
         }
         match text.strip_suffix('p').unwrap_or(text).parse() {
             Ok(lines) if lines > 0 => Ok(Self::Lines(lines)),
-            _ => Err(format!("qualità non valida: {text}")),
+            _ => Err(format!("invalid quality: {text}")),
         }
     }
 }
@@ -73,25 +78,86 @@ impl QualityChoice {
 pub enum Interruption {
     /// The server refused the URLs' token: only a new resolution gives new
     /// ones.
-    Refused(String),
+    Refused(Cause),
     /// The playlist stood still, or its numbering went back.
-    Stuck(String),
+    Stuck(Stall),
     /// The stream uses HLS features this client does not have.
-    Unsupported(String),
+    Unsupported(Cause),
     /// A downloader gave up for another reason.
-    Failed(String),
+    Failed(Cause),
 }
 
-impl std::fmt::Display for Interruption {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Localized for Interruption {
+    fn text(&self, language: Language) -> String {
         match self {
-            Self::Refused(reason) | Self::Stuck(reason) | Self::Failed(reason) => {
-                f.write_str(reason)
-            }
-            Self::Unsupported(reason) => write!(f, "non supportato: {reason}"),
+            Self::Refused(cause) | Self::Failed(cause) => cause.text(language),
+            Self::Stuck(stall) => stall.text(language),
+            Self::Unsupported(cause) => text!(language, "live-unsupported", cause = cause.text(language)),
         }
     }
 }
+
+/// What made a download of a live source fail.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cause {
+    Network(net::Error),
+    Playlist(hls::playlist::Error),
+    Recipe(recipe::Error),
+    Source(source::Error),
+    /// A segment that does not decrypt.
+    Decryption(hls::decrypt::Error),
+    /// An AES-128 key that is not 16 bytes long.
+    KeyLength,
+    PackedAudio(hls::packed_audio::Error),
+    /// The HTTP client could not be made, as TLS or the system says.
+    Client(String),
+}
+
+impl Localized for Cause {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Network(error) => error.text(language),
+            Self::Playlist(error) => error.text(language),
+            Self::Recipe(error) => error.text(language),
+            Self::Source(error) => error.text(language),
+            Self::Decryption(hls::decrypt::Error::Length) => text!(language, "live-decryption-length"),
+            Self::Decryption(hls::decrypt::Error::Padding) => text!(language, "live-decryption-padding"),
+            Self::KeyLength => text!(language, "live-key-length"),
+            Self::PackedAudio(error) => error.text(language),
+            Self::Client(detail) => detail.clone(),
+        }
+    }
+}
+
+impl From<net::Error> for Cause {
+    fn from(error: net::Error) -> Self {
+        Self::Network(error)
+    }
+}
+
+impl From<hls::playlist::Error> for Cause {
+    fn from(error: hls::playlist::Error) -> Self {
+        Self::Playlist(error)
+    }
+}
+
+/// A playlist that stood still: for how long, its last segment and the one
+/// expected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stall {
+    pub idle: Duration,
+    pub last: u64,
+    pub expected: u64,
+}
+
+impl Localized for Stall {
+    fn text(&self, language: Language) -> String {
+        let Self { idle, last, expected } = self;
+        text!(language, "live-stall", seconds = idle.as_secs(), last = last, expected = expected)
+    }
+}
+
+display_in_english!(Interruption, Cause, Stall);
 
 /// What a live source shows the screens.
 #[derive(Clone, Default, Debug)]

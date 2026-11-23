@@ -9,7 +9,7 @@ settings on the TV, how it plays, and what is verified on an LG OLED55B16LA
 ## Building
 
 The window uses the system SDL2, loaded at runtime, with an OpenGL ES 2
-renderer and text rasterized by `fontdue` with a system font.
+renderer and text rasterized by `ab_glyph` with a system font.
 On desktop SDL2 and FFmpeg are needed (with Homebrew: `sdl2-compat` and
 `ffmpeg`; on Linux FFmpeg is found with `pkg-config`; `MANA_FFMPEG` points to
 another prefix). For now playback exists only on the TV:
@@ -51,7 +51,7 @@ The package is for webOS 6 or later, as its description says. `package.py`
 also stops when the app or an included library asks for a glibc newer than
 webOS 6's 2.28, or for a library that is neither in the package nor in the
 firmware ([elf.py](../tools/webos/elf.py)), and when a function that the app
-looks up by name in SDL or in Starfish is missing from one of the webOS 6 or
+looks up by name in SDL, in Starfish or in `libhelpers` is missing from one of the webOS 6 or
 later firmwares in the webosbrew firmware database, downloaded the first
 time into `private/firmware` ([firmware.py](../tools/webos/firmware.py)); the
 results are in the
@@ -65,14 +65,15 @@ ABI changes from one webOS generation to the next.
 
 The TV empties `/tmp` at every power-off; clips and `.stream` files saved in
 `/media/developer/mana/` remain. The folder is created by the app, which runs
-as its own user and saves the list and identifier there: if it is created
+as its own user and saves there the list, the device identifier and the
+language chosen: if it is created
 via SSH as root, it must be made writable (`mkdir -m 777`). If
 `/tmp/mana-autoplay` contains the name of one of these files, or of a
 channel from the [channel list](channel-list.md), the app plays it at start.
 
 A `.stream` file contains a line `url = …`, or the steps of a
 [recipe](channel-list.md#recipe-steps) written as `resolve = …` and run on
-the TV at every opening, one line `header = Nome: valore` for each header
+the TV at every opening, one line `header = Name: value` for each header
 and, optionally, `ca = file.pem`. A header that a request cannot carry, here
 or in an M3U list (invalid name, control or non-ASCII characters, value over
 4096 bytes), is dropped with a log warning that gives its name
@@ -80,9 +81,9 @@ or in an M3U list (invalid name, control or non-ASCII characters, value over
 whose website describes the live stream in a JSON opens like this:
 
 ```text
-resolve = get https://tv.invalid/dirette/canale1.json
+resolve = get https://tv.invalid/live/channel1.json
 resolve = json video.content_url
-resolve = query formato=hls
+resolve = query format=hls
 resolve = get
 resolve = json video.0
 ```
@@ -91,10 +92,11 @@ Settings live in `/media/developer/mana/mana.conf`, which persists, and in
 `/tmp/mana.conf`, for tests, which overrides it
 ([settings.rs](../apps/tv/src/settings.rs)):
 
-- `lista`: the URL of the channel list, which takes precedence over the one
+- `list`: the URL of the channel list, which takes precedence over the one
   chosen from the phone;
-- how far data runs ahead of the displayed frame, the audio offset and the
-  loop;
+- `lead_ms` (1500), `audio_offset_ms` (0), `loop` (`true`): how far data
+  runs ahead of the displayed frame, the audio offset and whether local
+  clips loop;
 - `quality`: the starting quality of live streams with several variants,
   `auto` or the lines, such as `720`;
 - `debug = true`: the full log;
@@ -104,7 +106,9 @@ Settings live in `/media/developer/mana/mana.conf`, which persists, and in
   then 10 s with the list open and no keys pressed, with frame times, CPU and
   memory in the log;
 - `freeze_test_s`: the stalled pipeline test, paused after that many seconds
-  of each opening.
+  of each opening;
+- `locale`, only in `/tmp/mana.conf`: the TV's locale code (`it-IT`) without
+  asking the TV; empty, a TV whose language cannot be read.
 
 The home screen shows the channels of the list, then clips and `.stream`
 files; during playback OK opens the same channels over the video. A channel
@@ -123,6 +127,37 @@ With `debug = true` it also writes what repeats during viewing, that is the
 position every second, the sections, the decoder events and the keys
 ([log.rs](../crates/core/src/log.rs)); it is kept in RAM, reset at every
 start and emptied beyond 4 MB.
+
+## Language
+
+The screens and the phone page are in English or Italian
+([language](../crates/core/src/language/mod.rs)). The texts are in one
+Fluent catalog per language, `en.ftl` and `it.ftl` in the same folder,
+shared with the core's messages and built into the binary, so the desktop
+app will read the same ones. On webOS a native app can instead install
+`cstrings.json` files that the system's ResBundle reads, as moonlight-tv
+does, converting them from its gettext catalogs for the TV only; that
+ties the texts to webOS. At start the
+app takes the choice kept in `/media/developer/mana/language`; with
+"Automatic", the
+default, the TV's UI language, `settings.localeInfo.locales.UI` from
+`luna://com.webos.settingsservice/getSystemSettings`, asked once within
+600 ms, as plx-native and webos-native-app-kit ask it, through
+`HLunaServiceCall` of `libhelpers.so.2`, loaded with dlopen, as
+webos-native-app-kit and moonlight-tv call luna (plx-native uses
+`libluna-service2`; both are on every webOS 6–11 firmware)
+([locale.rs](../apps/tv/src/platform/locale.rs)). LG's SDL 2.0.10 has no
+`SDL_GetPreferredLocales`, and `LANG` is not read on webOS; the desktop build
+reads `LC_ALL`, `LC_MESSAGES` or `LANG` instead. A code whose language is
+`it` gives Italian, any other code English, and so does a call that fails,
+times out or answers without the code. The first frame waits for the answer,
+together with the window's focus. "Language" in Settings cycles Automatic,
+Italiano and English with OK, left and right, applies at once and is kept;
+a change of the TV's language while the app runs is not followed. An error
+shows untranslated only what comes from outside the app, as FFmpeg's,
+Starfish's or the system's words and a server's answer; the errors carry it
+as a field of their own, and everything Mana words is in the catalogs. The
+log names the language and where it came from, and is always in English.
 
 ## Tests on the TV
 
@@ -277,7 +312,9 @@ webOS 6 the following are verified:
   resumes in sync;
 - performance on public live streams: app at 13–15% of one core (about 6
   points from the app's code, the rest from LG's pipeline in the process),
-  101–111 MB of RSS of which about 70 private, 350–440 MB free on the TV;
+  101–111 MB of RSS of which about 70 private, 350–440 MB free on the TV
+  (78–95 MB since 22 November, with text rasterized on demand:
+  [memory](sources/performance.md#memory));
   the same with the TV's FFmpeg, used in the feasibility phase, and with the
   included one, which adds 2.6 MB of libraries;
 - live stream formats: H.264 1080i, AC-3, E-AC-3 5.1 and HE-AAC audio; MPEG

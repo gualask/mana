@@ -8,7 +8,7 @@
 
 ## Conventions
 
-- Docs, code, comments and commit messages are in English. Every Markdown file goes under `docs/` (`docs/todo.md` too), except `README.md`, which is for end users only (what the app does, formats, requirements, use), and this file. Text the app shows, on screen and in the log, is in Italian, and so are the keys of the channel-list format.
+- Docs, code, comments and commit messages are in English. Every Markdown file goes under `docs/` (`docs/todo.md` too), except `README.md`, which is for end users only (what the app does, formats, requirements, use), and this file. Text the app shows, on screen and on the phone page, is in English and Italian: it lives in the Fluent catalogs `crates/core/src/language/en.ftl` and `it.ftl`, read through `text!`, and a new text goes in both (`cargo test` checks the catalogs against the sources). The log, and the keys of the channel-list format, are in English.
 - One branch, `main`.
 - Experiments and spikes go in `.local/` (gitignored), never in the sources.
 - `private/` (gitignored) holds TV access (`tv.env`), real stream sources and anything that may not be redistributed.

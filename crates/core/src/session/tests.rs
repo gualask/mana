@@ -65,7 +65,7 @@ fn ended(session: &Session) -> String {
         if state.ended() {
             return state.to_string();
         }
-        assert!(Instant::now() < deadline, "la visione non finisce: {state}");
+        assert!(Instant::now() < deadline, "the viewing does not end: {state}");
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -120,7 +120,7 @@ fn changing_channel_returns_at_once_while_a_request_is_pending() {
     // Each ends once its request does.
     let deadline = Instant::now() + Duration::from_secs(5);
     while session.is_stopping() {
-        assert!(Instant::now() < deadline, "le visioni fermate non finiscono");
+        assert!(Instant::now() < deadline, "the stopped viewings do not end");
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -182,7 +182,7 @@ fn a_refused_token_is_resolved_again_within_the_budget() {
     let mut session = Session::new(open);
     session.play("refused".into(), stream_file("refused", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     let state = ended(&session);
-    assert!(state.contains(&format!("fonte rifiutata anche dopo {} nuove risoluzioni", reopen::MAX_REOPENINGS)), "{state}");
+    assert!(state.contains(&format!("source refused even after {} new resolutions", reopen::MAX_REOPENINGS)), "{state}");
     let masters = asked.lock().unwrap().iter().filter(|a| a.path == "/master.m3u8").count();
     assert_eq!(masters, 1 + reopen::MAX_REOPENINGS);
     session.stop();
@@ -214,7 +214,7 @@ fn a_master_refused_at_the_opening_has_the_recipe_run_again() {
     session.play("recipe".into(), Program::Path(path), Settings::default()).unwrap();
     // The segment arrives: the stream ends on its formats, not on the 403.
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
     let asked = asked.lock().unwrap();
     let paths: Vec<&str> = asked.iter().map(|a| a.path.as_str()).collect();
     assert_eq!(paths, ["/token", "/expired.m3u8", "/token", "/master.m3u8", "/media.m3u8", "/audio.aac"]);
@@ -227,8 +227,8 @@ fn a_direct_url_refused_at_the_opening_ends_with_its_status() {
     let mut session = Session::new(open);
     session.play("denied".into(), stream_file("denied", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     let state = ended(&session);
-    assert!(state.contains("HTTP 403 per /master.m3u8"), "{state}");
-    assert!(state.contains(&format!("anche dopo {} nuove risoluzioni", reopen::MAX_REOPENINGS)), "{state}");
+    assert!(state.contains("HTTP 403 for /master.m3u8"), "{state}");
+    assert!(state.contains(&format!("even after {} new resolutions", reopen::MAX_REOPENINGS)), "{state}");
     assert_eq!(asked.lock().unwrap().len(), 1 + reopen::MAX_REOPENINGS);
 }
 
@@ -257,7 +257,7 @@ fn a_stream_without_video_ends_without_reopening() {
     let mut session = Session::new(open);
     session.play("audio".into(), stream_file("audio", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
     assert_eq!(asked.lock().unwrap().iter().filter(|a| a.path == "/media.m3u8").count(), 1);
     assert!(fed.lock().unwrap().loads.is_empty());
 }
@@ -272,7 +272,7 @@ fn a_channel_s_headers_go_with_every_request_of_its_stream() {
     let (open, _) = fake::open();
     let mut session = Session::new(open);
     let headers = vec![("User-Agent".into(), "HbbTV/1.6.1".into()), ("Referer".into(), "https://b.invalid/".into())];
-    let program = Program::Live(Source::direct(format!("{address}/master.m3u8"), headers));
+    let program = Program::Live(Source::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
     session.play("Canale".into(), program, Settings::default()).unwrap();
     ended(&session);
     let asked = asked.lock().unwrap();
@@ -303,26 +303,38 @@ fn a_channel_s_recipe_runs_with_its_parameters_and_headers() {
     });
     ADDRESS.set(address.clone()).unwrap();
     let lines = [
-        format!("get {address}/v4/start?clientID={{dispositivo}}&channelID={{id}}"),
-        "testo {json:servers.stitcher}/stitch/{id}/master.m3u8?{json:stitcherParams}&jwt={json:sessionToken}".to_string(),
+        format!("get {address}/v4/start?clientID={{device}}&channelID={{id}}"),
+        "text {json:servers.stitcher}/stitch/{id}/master.m3u8?{json:stitcherParams}&jwt={json:sessionToken}".to_string(),
     ];
     let parameter = |name: &str| match name {
         "id" => Some("c7".to_string()),
-        "dispositivo" => Some("d-1".to_string()),
+        "device" => Some("d-1".to_string()),
         _ => None,
     };
     let steps = crate::live::recipe::instantiate(&lines, parameter).unwrap();
-    let source = Source::recipe(steps, vec![("User-Agent".into(), "Mana-prova".into())]);
+    let source = Source::recipe(steps, vec![("User-Agent".into(), "Mana-test".into())]);
     let (open, _) = fake::open();
     let mut session = Session::new(open);
     session.play("Pluto".into(), Program::Live(source), Settings::default()).unwrap();
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
     let asked = asked.lock().unwrap();
     let paths: Vec<&str> = asked.iter().map(|a| a.path.as_str()).collect();
     let master = "/stitch/c7/master.m3u8?a=1%202&jwt=t";
     assert_eq!(paths, ["/v4/start?clientID=d-1&channelID=c7", master, "/stitch/c7/media.m3u8", "/stitch/c7/audio.aac"]);
-    assert!(asked.iter().all(|a| a.headers.contains(&"user-agent: mana-prova".into())));
+    assert!(asked.iter().all(|a| a.headers.contains(&"user-agent: mana-test".into())));
+}
+
+#[test]
+fn a_recipe_answer_over_the_limit_ends_without_retrying() {
+    let (address, asked) = serve(|_| (200, vec![b' '; crate::net::MAX_TEXT_BYTES as usize + 1]));
+    let steps = vec![crate::live::recipe::Step::parse(&format!("get {address}/token")).unwrap()];
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("big".into(), Program::Live(Source::recipe(steps, Vec::new())), Settings::default()).unwrap();
+    let state = ended(&session);
+    assert!(state.contains("/token: answer over"), "{state}");
+    assert_eq!(asked.lock().unwrap().len(), 1);
 }
 
 #[test]
@@ -336,12 +348,12 @@ fn a_header_no_request_can_carry_is_left_out_and_the_stream_plays() {
     let mut session = Session::new(open);
     let headers =
         vec![("User-Agent".into(), "HbbTV/1.6.1".into()), ("Referer".into(), "https://b.invalid/\r\nX-Injected: 1".into())];
-    let program = Program::Live(Source::direct(format!("{address}/master.m3u8"), headers));
+    let program = Program::Live(Source::direct(format!("{address}/master.m3u8").parse().unwrap(), headers));
     session.play("Canale".into(), program, Settings::default()).unwrap();
     // The segment arrives: the stream ends on its formats, not on requests
     // the transport refuses.
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
     for request in asked.lock().unwrap().iter() {
         assert!(request.headers.contains(&"user-agent: hbbtv/1.6.1".into()), "{}: {:?}", request.path, request.headers);
         assert!(!request.headers.iter().any(|h| h.starts_with("referer:") || h.starts_with("x-injected:")), "{:?}", request.headers);
@@ -363,7 +375,7 @@ fn relative_urls_resolve_against_where_a_redirect_led() {
     session.play("netrw".into(), stream_file("netrw", &format!("{address}/live/master.m3u8")), Settings::default()).unwrap();
     // The segment arrives: the stream ends on its formats, not on a 403.
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
     assert!(asked.lock().unwrap().iter().all(|a| a.path == "/live/master.m3u8" || a.path.starts_with("/@token=1/")));
 }
 
@@ -383,7 +395,7 @@ fn a_segment_that_cannot_be_read_is_skipped() {
     session.play("skipped".into(), stream_file("skipped", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     // The good segment arrives: the stream ends on its formats, not on the bad segment.
     let state = ended(&session);
-    assert!(state.starts_with("errore: codec video non supportato"), "{state}");
+    assert_eq!(state, "Error: the stream has no video");
 }
 
 /// Two seconds of silent AAC as HLS packed audio: an ID3 tag with the

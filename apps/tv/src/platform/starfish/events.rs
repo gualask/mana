@@ -50,12 +50,12 @@ pub(super) unsafe extern "C" fn on_event(kind: c_int, value: c_longlong, text: *
         EVENT_FRAME_READY => shared.presented_ns = Some(value),
         EVENT_LOAD_COMPLETED => shared.load_completed = true,
         EVENT_UNLOAD_COMPLETED => shared.unload_completed = true,
-        EVENT_ERROR => shared.error = Some(format!("errore {value} {text}")),
+        EVENT_ERROR => shared.error = Some(format!("{value} {text}")),
         EVENT_BUFFER_LOW => shared.buffer_low += 1,
         _ => {}
     }
     if kind != EVENT_FRAME_READY && kind != EVENT_BUFFER_LOW {
-        debug!("evento 0x{kind:x} {value} {text}");
+        debug!("event 0x{kind:x} {value} {text}");
     }
     CHANGED.notify_all();
 }

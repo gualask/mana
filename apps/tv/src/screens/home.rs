@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
+use mana_core::language::{Language, Localized};
 use mana_core::session::{Program, STREAM_EXTENSION};
+use mana_core::text;
 
 use super::channel_list::{LOGO_SIZE, draw_logo};
 use super::gfx::Renderer;
@@ -56,7 +58,7 @@ impl App {
 
     pub(super) fn handle_home(&mut self, action: Action) -> Outcome {
         match action {
-            // The rows stay where they are while «Impostazioni» has the focus.
+            // The rows stay where they are while «Settings» has the focus.
             Action::Up | Action::Down if self.settings_focused => {}
             Action::Up => self.focus = self.focus.saturating_sub(1),
             Action::Down => self.focus = (self.focus + 1).min(self.rows().saturating_sub(1)),
@@ -85,11 +87,11 @@ impl App {
     }
 
     /// What the home screen says about the list, while it has no channels.
-    fn list_status(&self) -> Option<String> {
+    fn list_status(&self, language: Language) -> Option<String> {
         match self.list_state() {
-            ListState::Downloading => Some("Lista dei canali in arrivo…".into()),
-            ListState::Unavailable(reason) => Some(format!("Lista dei canali non disponibile: {reason}")),
-            ListState::NotSet => Some("Nessuna lista: impostala da Impostazioni →".into()),
+            ListState::Downloading => Some(text!(language, "home-list-downloading")),
+            ListState::Unavailable(reason) => Some(text!(language, "home-list-unavailable", reason = reason.text(language))),
+            ListState::NotSet => Some(text!(language, "home-list-not-set")),
             ListState::Tests(_) | ListState::Channels(_) | ListState::Empty => None,
         }
     }
@@ -104,41 +106,44 @@ impl App {
         self.home_first = self.home_first.min(self.rows().saturating_sub(VISIBLE_ROWS));
     }
 
-    pub(super) fn draw_home(&mut self, r: &mut Renderer, t: &mut Text, s: f32, surface: (i32, i32)) {
+    pub(super) fn draw_home(&mut self, r: &mut Renderer, t: &mut Text, s: f32, surface: (i32, i32), language: Language) {
         r.begin(surface.0, surface.1, BACKGROUND);
         self.logos.upload(r);
         t.draw(r, 120.0 * s, 90.0 * s, 72.0 * s, TEXT, "Mana");
-        t.draw(r, 120.0 * s, 180.0 * s, 32.0 * s, MUTED, "Prova di fattibilità · canali della lista, poi clip e dirette di prova");
-        self.draw_settings_button(r, t, s);
+        let subtitle = text!(language, "home-subtitle");
+        t.draw(r, 120.0 * s, 180.0 * s, 32.0 * s, MUTED, &subtitle);
+        self.draw_settings_button(r, t, s, language);
 
-        if let Some(status) = self.list_status() {
+        if let Some(status) = self.list_status(language) {
             t.draw(r, 120.0 * s, 226.0 * s, 24.0 * s, MUTED, &status);
         } else if self.rows() > VISIBLE_ROWS {
-            t.draw(r, 120.0 * s, 226.0 * s, 24.0 * s, MUTED, &format!("{} di {}", self.focus + 1, self.rows()));
+            let (focus, rows) = (self.focus + 1, self.rows());
+            t.draw(r, 120.0 * s, 226.0 * s, 24.0 * s, MUTED, &text!(language, "home-position", focus = focus, count = rows));
         }
         if self.rows() == 0 {
-            t.draw(r, 120.0 * s, 280.0 * s, 32.0 * s, MUTED, &format!("Nessun canale, né clip in {CLIPS_DIR} o {DATA_DIR}"));
+            let empty = text!(language, "home-empty", clips = CLIPS_DIR, data = DATA_DIR);
+            t.draw(r, 120.0 * s, 280.0 * s, 32.0 * s, MUTED, &empty);
         }
         self.scroll_to_focus();
-        self.draw_rows(r, t, s);
+        self.draw_rows(r, t, s, language);
         if let Some(message) = &self.message {
-            t.draw(r, 120.0 * s, 900.0 * s, 28.0 * s, ERROR, message);
+            t.draw(r, 120.0 * s, 900.0 * s, 28.0 * s, ERROR, &message.text(language));
         }
-        let footer = "OK per riprodurre, poi OK per i canali, su o giù per il pannello, destra per la qualità · destra qui per Impostazioni · Indietro per uscire";
-        t.draw(r, 120.0 * s, 980.0 * s, 24.0 * s, MUTED, footer);
+        let footer = text!(language, "home-footer");
+        t.draw(r, 120.0 * s, 980.0 * s, 24.0 * s, MUTED, &footer);
     }
 
-    /// «Impostazioni», at the top right.
-    fn draw_settings_button(&mut self, r: &mut Renderer, t: &mut Text, s: f32) {
+    /// «Settings», at the top right.
+    fn draw_settings_button(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
         let (x, y, w, h) = (1460.0 * s, 96.0 * s, 340.0 * s, 72.0 * s);
         r.rect(x, y, w, h, if self.settings_focused { FOCUS } else { ROW });
         self.hits.add(x, y, w, h, Target::Settings);
-        t.draw(r, x + 36.0 * s, y + 16.0 * s, 32.0 * s, TEXT, "Impostazioni");
+        t.draw(r, x + 36.0 * s, y + 16.0 * s, 32.0 * s, TEXT, &text!(language, "settings"));
     }
 
     /// The rows shown: a channel with its logo, dimmed when it cannot be
     /// played, or a clip. Asks for the logos of the channels shown.
-    fn draw_rows(&mut self, r: &mut Renderer, t: &mut Text, s: f32) {
+    fn draw_rows(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
         let channels = self.channels.channels();
         let with_logos = channels.iter().any(|c| c.logo.is_some());
         let first = self.home_first;
@@ -157,7 +162,7 @@ impl App {
             }
             let text_x = if with_logos { 260.0 * s } else { 156.0 * s };
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
-            t.draw(r, text_x, y + 20.0 * s, 36.0 * s, colour, &channel.name);
+            t.draw(r, text_x, y + 20.0 * s, 36.0 * s, colour, &channel.title(language));
         }
         let logos = shown.filter_map(|i| channels.get(i)?.logo.as_deref());
         self.logos.want(logos);

@@ -84,7 +84,7 @@ impl Ladder {
         assert!(!variants.is_empty(), "a master playlist has at least one variant");
         if variants.len() > 1 {
             let list: Vec<String> = variants.iter().map(describe).collect();
-            log!("hls: varianti {}", list.join(", "));
+            log!("hls: variants {}", list.join(", "));
         }
         stats.lock().unwrap().heights = heights(&variants);
         let mut ladder = Self {
@@ -119,7 +119,7 @@ impl Ladder {
     /// one fits in UP_SHARE of it and the hold since going down is over.
     pub(super) fn choose(&mut self, now: Instant) -> Option<Url> {
         if let Some(chosen) = self.chosen() {
-            return (chosen != self.current).then(|| self.switch(chosen, "scelta"));
+            return (chosen != self.current).then(|| self.switch(chosen, "chosen"));
         }
         let estimate = self.estimate()?;
         if self.up_kept(now, UP_PROVEN) {
@@ -135,7 +135,7 @@ impl Ladder {
         if next == self.current {
             return None;
         }
-        let estimated = format!("banda stimata {} kbit/s", (estimate / 1000.0).round());
+        let estimated = format!("estimated bandwidth {} kbit/s", (estimate / 1000.0).round());
         if next > self.current {
             self.went_up = Some(now);
             return Some(self.switch(next, &estimated));
@@ -146,12 +146,12 @@ impl Ladder {
         }
         self.went_down = Some(now);
         let hold = self.hold_from(next);
-        Some(self.switch(next, &format!("{estimated}; risalita non prima di {} s", hold.as_secs())))
+        Some(self.switch(next, &format!("{estimated}; up again not before {} s", hold.as_secs())))
     }
 
     /// Follows variant `next` from now on, logging `why`; its URL.
     fn switch(&mut self, next: usize, why: &str) -> Url {
-        log!("hls: variante {} al posto di {}, {why}", describe(&self.variants[next]), describe(&self.variants[self.current]));
+        log!("hls: variant {} instead of {}, {why}", describe(&self.variants[next]), describe(&self.variants[self.current]));
         self.current = next;
         self.variants[next].url.clone()
     }

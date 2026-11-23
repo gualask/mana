@@ -7,6 +7,7 @@ pub mod gfx;
 mod hits;
 mod home;
 mod info;
+mod language;
 mod list_updates;
 mod loader;
 pub mod logos;
@@ -22,10 +23,13 @@ use channel_list::ChannelList;
 use hits::Hits;
 use info::InfoPanel;
 use gfx::{Color, IMAGE_SLOTS, Renderer};
+use language::Languages;
 pub use loader::REDRAW as LOADER_REDRAW;
 use logos::Logos;
-use mana_core::catalog::update::Updater;
-use mana_core::session::{Program, Session, Stats};
+use mana_core::catalog::{Channel, ChannelError};
+use mana_core::catalog::update::{self, Updater};
+use mana_core::language::{Language, Localized};
+use mana_core::session::{Failure, Program, Session, Stats};
 use quality_menu::QualityMenu;
 use setup::Setup;
 use text::Text;
@@ -50,28 +54,47 @@ pub enum Outcome {
     Exit,
 }
 
+/// What the home screen says went wrong, kept as it happened: it reads in
+/// the language of each frame.
+enum Message {
+    /// The channel cannot be played.
+    Unplayable { channel: Box<Channel>, error: ChannelError },
+    NotStarted(Failure),
+}
+
+impl Localized for Message {
+    fn text(&self, language: Language) -> String {
+        match self {
+            Self::Unplayable { channel, error } => format!("{}: {}", channel.title(language), error.text(language)),
+            Self::NotStarted(failure) => failure.text(language),
+        }
+    }
+}
+
 pub struct App {
     session: Session,
+    /// The language the screens and the phone's page are in.
+    languages: Languages,
     clips: Vec<PathBuf>,
     /// The home screen's focused row, among the channels then the clips.
     focus: usize,
     /// The first row shown: the list scrolls only when the focus leaves
     /// the rows shown, so that a row stays under the pointer.
     home_first: usize,
-    message: Option<String>,
+    message: Option<Message>,
     /// The channels, on the home screen and over the video.
     channels: ChannelList,
     /// Downloads the list, at start and when the phone sends a URL; none
     /// with the tests' lists.
     updater: Option<Updater>,
-    /// The settings file whose `lista` wins over the URL chosen, if any.
+    /// The settings file whose `list` wins over the URL chosen, if any.
     list_file: Option<PathBuf>,
-    /// The home screen's «Impostazioni» has the focus instead of a row.
+    /// The home screen's «Settings» has the focus instead of a row.
     settings_focused: bool,
     /// The settings screen, while open.
     setup: Option<Setup>,
     /// Why there is no list to show, if the update failed without one.
-    list_failure: Option<String>,
+    list_failure: Option<update::Failure>,
     channels_open: bool,
     logos: Logos,
     /// Open over the video with Right, while the live stream offers heights.
@@ -91,11 +114,13 @@ impl App {
     pub fn new(session: Session) -> Self {
         let loaded = settings::load();
         mana_core::log::set_debug(loaded.debug);
+        let languages = Languages::start(loaded.locale);
         session.set_quality(loaded.quality);
         let (list, list_file) = loaded.list.unzip();
         let (channels, updater) = list_updates::channels(list, loaded.tests.ui_test);
         Self {
             session,
+            languages,
             clips: home::clips(),
             focus: 0,
             home_first: 0,
@@ -112,6 +137,12 @@ impl App {
             info: InfoPanel::default(),
             hits: Hits::default(),
         }
+    }
+
+    /// Whether the screens know their language: the first frame waits for
+    /// the TV's, for at most `locale::LIMIT`.
+    pub fn language_ready(&self) -> bool {
+        self.languages.ready()
     }
 
     /// Whether logos are still arriving for the channels shown: the screen
@@ -168,8 +199,10 @@ impl App {
         self.focus = index;
         match self.play_focused_channel() {
             Ok(()) => true,
-            Err(reason) => {
-                self.message = Some(format!("{}: {reason}", self.channels.focused().map_or("", |c| c.name.as_str())));
+            Err(error) => {
+                if let Some(channel) = self.channels.focused().cloned().map(Box::new) {
+                    self.message = Some(Message::Unplayable { channel, error });
+                }
                 false
             }
         }
@@ -210,10 +243,10 @@ impl App {
     }
 
     /// Plays the focused channel; the reason it cannot be played, if so.
-    fn play_focused_channel(&mut self) -> Result<(), String> {
+    fn play_focused_channel(&mut self) -> Result<(), ChannelError> {
         let Some(channel) = self.channels.focused() else { return Ok(()) };
         let source = channel.play.clone()?;
-        self.start(channel.name.clone(), Program::Live(source));
+        self.start(channel.title(self.languages.current()).to_string(), Program::Live(source));
         Ok(())
     }
 
@@ -224,24 +257,25 @@ impl App {
     fn start(&mut self, name: String, program: Program) {
         self.setup = None;
         self.info.started();
-        self.message = self.session.play(name, program, settings::load().playback).err();
+        self.message = self.session.play(name, program, settings::load().playback).err().map(Message::NotStarted);
     }
 
     /// Draws the frame on a surface of `surface` drawable pixels.
     pub fn draw(&mut self, r: &mut Renderer, t: &mut Text, surface: (i32, i32)) {
         let s = surface.1 as f32 / DESIGN_HEIGHT;
+        let language = self.languages.current();
         self.hits.clear();
         if !self.session.is_playing() && self.setup.is_some() {
-            self.draw_setup(r, t, s, surface);
+            self.draw_setup(r, t, s, surface, language);
         } else if !self.session.is_playing() {
-            self.draw_home(r, t, s, surface);
+            self.draw_home(r, t, s, surface, language);
         } else if self.channels_open {
             r.begin(surface.0, surface.1, Color::TRANSPARENT);
             self.logos.upload(r);
-            self.channels.draw(r, t, &mut self.logos, s, &mut self.hits);
+            self.channels.draw(r, t, &mut self.logos, s, &mut self.hits, language);
         } else {
             r.begin(surface.0, surface.1, Color::TRANSPARENT);
-            self.draw_over_video(r, t, s, surface);
+            self.draw_over_video(r, t, s, surface, language);
         }
         r.finish();
     }

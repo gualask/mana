@@ -54,7 +54,7 @@ def sample(seconds):
     upload = tv.run(f'cat > {REMOTE_SAMPLER} && chmod +x {REMOTE_SAMPLER}', stdin=sampler)
     if upload.returncode:
         raise SystemExit('upload failed: ' + upload.stderr.decode(errors='replace'))
-    print(f'campionamento di {seconds} s del processo {pid[0]}…', file=sys.stderr)
+    print(f'sampling process {pid[0]} for {seconds} s…', file=sys.stderr)
     result = tv.run(f'{REMOTE_SAMPLER} {pid[0]} {seconds}; rm -f {REMOTE_SAMPLER}')
     if result.returncode:
         raise SystemExit('sampler failed: ' + result.stderr.decode(errors='replace'))
@@ -164,22 +164,22 @@ def report(run, counts, top):
     total = len(run.samples)
     share = lambda n, of=total: f'{100 * n / of:5.1f}%'
     # Samples saved before the sampler printed its frequency give no cores.
-    cores = (f', {total / (run.frequency * run.seconds):.2f} core in media in {run.seconds} s'
+    cores = (f', {total / (run.frequency * run.seconds):.2f} cores on average over {run.seconds} s'
              if run.frequency and run.seconds else '')
-    print(f'campioni {total}, persi {run.lost}{cores}')
-    sections = [('per libreria', counts.by_module, 12), ('per thread', counts.by_thread, 12),
-                ('per funzione', counts.by_function, top)]
+    print(f'samples {total}, lost {run.lost}{cores}')
+    sections = [('by library', counts.by_module, 12), ('by thread', counts.by_thread, 12),
+                ('by function', counts.by_function, top)]
     for title, counter, count in sections:
         print(f'\n# {title}')
         for name, n in counter.most_common(count):
             print(f'{share(n)}  {short(name)}')
-    for title, counter in (('float software', counts.soft_float), ('divisioni software', counts.soft_division)):
+    for title, counter in (('float software', counts.soft_float), ('software divisions', counts.soft_division)):
         counter = +counter
         print(f'\n# {title}: {share(sum(counter.values()))}')
         for name, n in counter.most_common(8):
             print(f'{share(n)}  {short(name)}')
     for thread, n in counts.by_thread.most_common(3):
-        print(f'\n# thread {thread} ({share(n)} dei campioni), ripartito')
+        print(f'\n# thread {thread} ({share(n)} of the samples), broken down')
         for name, m in counts.per_thread[thread].most_common(8):
             print(f'{share(m, n)}  {short(name)}')
 

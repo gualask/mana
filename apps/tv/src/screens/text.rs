@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use fontdue::{Font, FontSettings};
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont, point};
 
 use super::gfx::{AtlasRect, Color, Renderer};
 
@@ -15,8 +15,11 @@ struct Glyph {
     advance: f32,
 }
 
+/// The font is parsed on demand: a glyph's outline is read from the file
+/// when it is first rasterized. A rasterizer that builds every outline at
+/// load (fontdue) holds 47 MB for the TV's 14,254-glyph system font.
 pub struct Text {
-    font: Font,
+    font: FontVec,
     glyphs: HashMap<(char, u16), Glyph, BuildHasherDefault<KeyHasher>>,
 }
 
@@ -56,20 +59,19 @@ impl Text {
         for path in candidates {
             match std::fs::read(path) {
                 Ok(data) => {
-                    let font = Font::from_bytes(data, FontSettings::default())
-                        .map_err(|e| format!("font {path}: {e}"))?;
+                    let font = FontVec::try_from_vec(data).map_err(|e| format!("font {path}: {e}"))?;
                     return Ok(Self { font, glyphs: HashMap::default() });
                 }
                 Err(e) => errors.push(format!("{path}: {e}")),
             }
         }
-        Err(format!("nessun font disponibile ({})", errors.join("; ")))
+        Err(format!("no font available ({})", errors.join("; ")))
     }
 
     /// Draws `text` with its top-left corner at (x, y) and returns its width.
     pub fn draw(&mut self, r: &mut Renderer, x: f32, y: f32, px: f32, color: Color, text: &str) -> f32 {
         let size = glyph_size(px);
-        let ascent = self.font.horizontal_line_metrics(size as f32).map_or(size as f32 * 0.8, |m| m.ascent);
+        let ascent = self.font.as_scaled(self.scale(size)).ascent();
         let baseline = (y + ascent).round();
         let mut pen = x;
         for ch in text.chars() {
@@ -92,15 +94,31 @@ impl Text {
         if let Some(glyph) = self.glyphs.get(&(ch, size)) {
             return *glyph;
         }
-        let (m, bitmap) = self.font.rasterize(ch, size as f32);
-        let glyph = Glyph {
-            rect: if m.width > 0 { r.upload_alpha(m.width as i32, m.height as i32, &bitmap) } else { None },
-            left: m.xmin as f32,
-            top: (m.height as i32 + m.ymin) as f32,
-            advance: m.advance_width,
-        };
+        let font = self.font.as_scaled(self.scale(size));
+        let id = font.glyph_id(ch);
+        let mut glyph = Glyph { rect: None, left: 0.0, top: 0.0, advance: font.h_advance(id) };
+        if let Some(outline) = self.font.outline_glyph(id.with_scale_and_position(font.scale(), point(0.0, 0.0))) {
+            let bounds = outline.px_bounds();
+            let (width, height) = (bounds.width() as usize, bounds.height() as usize);
+            let mut bitmap = vec![0u8; width * height];
+            outline.draw(|x, y, coverage| {
+                bitmap[y as usize * width + x as usize] = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
+            });
+            if width > 0 {
+                glyph.rect = r.upload_alpha(width as i32, height as i32, &bitmap);
+            }
+            (glyph.left, glyph.top) = (bounds.min.x, -bounds.min.y);
+        }
         self.glyphs.insert((ch, size), glyph);
         glyph
+    }
+
+    /// The scale at which the em square is `size` pixels, as CSS sizes text.
+    /// ab_glyph scales the height from descent to ascent instead, and its
+    /// `pt_to_px_scale` assumes 96 dpi.
+    fn scale(&self, size: u16) -> PxScale {
+        let em = self.font.units_per_em().unwrap_or(1.0);
+        PxScale::from(f32::from(size) * self.font.height_unscaled() / em)
     }
 }
 

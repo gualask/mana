@@ -47,7 +47,7 @@ pub fn trim() {
     let mut guard = FILE.lock().unwrap();
     let Some(file) = guard.as_mut() else { return };
     if file.metadata().is_ok_and(|m| m.len() > MAX_LOG_BYTES) && file.set_len(0).is_ok() {
-        let _ = file.write_all(b"log svuotato: superato il limite di dimensione\n");
+        let _ = file.write_all(b"log emptied: over its size limit\n");
     }
 }
 

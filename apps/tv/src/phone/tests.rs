@@ -27,14 +27,17 @@ fn send(local: SocketAddr, request: &str) -> String {
 #[test]
 fn serves_the_code_hands_over_the_url_and_stops() {
     let Some(_) = local_ip() else { return };
-    let server = Server::start().unwrap();
+    let Ok(server) = Server::start(Language::Italian) else { panic!("server not started") };
     let path = server.address.rsplit_once('/').map(|(_, c)| format!("/{c}")).unwrap();
-    server.set_current(Some(&Url::parse("https://a.example/prima.toml").unwrap()));
+    server.set_current(Some(&Url::parse("https://a.example/first.toml").unwrap()));
     let mut silent = TcpStream::connect(server.local).unwrap();
 
     assert!(send(server.local, "GET /ZZZZZ HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
     let page = send(server.local, &format!("GET {} HTTP/1.1\r\n\r\n", path.to_lowercase()));
-    assert!(page.starts_with("HTTP/1.1 200") && page.contains("https://a.example/prima.toml"));
+    assert!(page.starts_with("HTTP/1.1 200") && page.contains("https://a.example/first.toml"));
+    server.set_language(Language::English);
+    assert!(send(server.local, &format!("GET {path} HTTP/1.1\r\n\r\n")).contains("<h1>Channel list</h1>"));
+    server.set_language(Language::Italian);
 
     let refused = send(server.local, &format!("POST {path} HTTP/1.1\r\nContent-Length: 11\r\n\r\nurl=ftp%3A1"));
     assert!(refused.contains("Non salvata"));

@@ -3,6 +3,7 @@
 //! under it (as Stremio Origin's hit areas: the drawing is the only
 //! layout), and what pointing at or clicking a row does.
 
+use super::setup::Row;
 use super::{App, Outcome};
 use crate::platform::keys::Action;
 
@@ -11,10 +12,12 @@ use crate::platform::keys::Action;
 pub enum Target {
     /// A row of the home screen: a channel, then the clips.
     Home(usize),
-    /// The home screen's «Impostazioni».
+    /// The home screen's «Settings».
     Settings,
-    /// The settings screen's «Aggiorna lista».
+    /// The settings screen's «Update list».
     Refresh,
+    /// The settings screen's «Language».
+    Language,
     Channel(usize),
     Quality(usize),
 }
@@ -68,8 +71,8 @@ impl App {
                 self.settings_focused = false;
             }
             Target::Settings => self.settings_focused = true,
-            // The settings screen's only button always has the focus.
-            Target::Refresh => {}
+            Target::Refresh => self.point_setup(Row::Refresh),
+            Target::Language => self.point_setup(Row::Language),
             Target::Channel(i) => self.channels.point(i),
             Target::Quality(i) => {
                 if let Some(menu) = &mut self.quality_menu {

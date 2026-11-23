@@ -90,7 +90,7 @@ def upload(output):
     result = Tv().run(f'mkdir -p {TV_CLIPS_DIR} && tar xf - -C {TV_CLIPS_DIR}', stdin=archive.getvalue())
     if result.returncode != 0:
         raise SystemExit(result.stderr.decode(errors='replace'))
-    print(f'{len(clips)} clip copiati in {TV_CLIPS_DIR}')
+    print(f'{len(clips)} clips copied to {TV_CLIPS_DIR}')
 
 
 def main():

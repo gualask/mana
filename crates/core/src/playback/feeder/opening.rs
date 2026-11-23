@@ -35,7 +35,7 @@ pub fn play(
     stats: &Mutex<Stats>,
 ) -> Result<Ended, Error> {
     let (first, description) = &reader.formats;
-    log!("sorgente: {description}");
+    log!("source: {description}");
     let mut playing = Playing::start(Load { open, settings, stop, stats }, *first, reader.without_audio)?;
     let mut freeze_test = FreezeTest::new(settings);
     loop {
@@ -57,7 +57,7 @@ pub fn play(
                 None
             }
             Demuxed::Looped => playing.looped(),
-            Demuxed::Failed(error) => return Err(error.into()),
+            Demuxed::Failed(error) => return Err(Error::Demuxer(error)),
         };
         if let Some(ended) = ended {
             return Ok(ended);
@@ -135,14 +135,14 @@ impl<'a> Playing<'a> {
         // next one loads.
         drop(feeder);
         let playing = Self::start(load, Formats { audio: next.audio.or(formats.audio), ..next }, without_audio)?;
-        log!("decoder ricaricato per {description} in {} ms", reloading.elapsed().as_millis());
+        log!("decoder reloaded for {description} in {} ms", reloading.elapsed().as_millis());
         Ok(playing)
     }
 
     /// A local file started again from its beginning.
     fn looped(&mut self) -> Option<Ended> {
         let offset_us = self.feeder.timeline.continue_after_loop();
-        log!("ripresa dall'inizio, offset {} ms", offset_us / 1000);
+        log!("restarted from the beginning, offset {} ms", offset_us / 1000);
         None
     }
 }
@@ -164,6 +164,6 @@ impl FreezeTest {
             return;
         }
         self.due = None;
-        log!("prova: decoder in pausa, {}", if feeder.backend.pause() { "accettata" } else { "rifiutata" });
+        log!("test: decoder paused, {}", if feeder.backend.pause() { "accepted" } else { "refused" });
     }
 }

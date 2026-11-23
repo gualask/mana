@@ -20,7 +20,7 @@ pub(super) enum ListState<'a> {
     /// No channels yet, and a download asked has not ended.
     Downloading,
     /// No channels, and why the last download failed.
-    Unavailable(&'a str),
+    Unavailable(&'a update::Failure),
     /// No URL in the settings, and none chosen from the phone.
     NotSet,
     /// A list downloaded without channels.
@@ -31,13 +31,14 @@ pub(super) enum ListState<'a> {
 const TEST_CHANNELS: usize = 5000;
 /// The channel list of the tests, copied over SSH (dev/tv/channels.py):
 /// when present, it replaces the list.
-const CHANNELS_FILE: &str = "/tmp/mana-channels.m3u";
+pub(super) const CHANNELS_FILE: &str = "/tmp/mana-channels.m3u";
 
 impl App {
     /// Hands the URL the phone sent to the updater, and takes each list
     /// downloaded, once it arrives, in place of the one shown; call at every
     /// turn of the event loop.
     pub fn refresh(&mut self) {
+        self.languages.refresh();
         self.take_phone_request();
         while let Some(update) = self.updater.as_mut().and_then(Updater::poll) {
             self.answer_phone(&update);
@@ -49,7 +50,7 @@ impl App {
                 update::Outcome::Failed(reason) => self.list_failure = Some(reason),
             }
         }
-        self.show_url_on_page();
+        self.sync_page();
     }
 
     /// Shows `channels` instead, on both screens, each focus kept on the
@@ -59,7 +60,7 @@ impl App {
         let focused = self.channels.channels().get(self.focus).map(|c| c.name.clone());
         self.channels.replace(channels);
         self.focus = match focused {
-            Some(name) => self.channels.position(&name).unwrap_or(0),
+            Some(name) => name.and_then(|name| self.channels.position(&name)).unwrap_or(0),
             // The first clip was focused only because no channel had come
             // yet: the screen opens on the first channel.
             None if before == 0 && self.focus == 0 => 0,
@@ -88,7 +89,7 @@ impl App {
 /// interface test when there is no other.
 pub(super) fn channels(list: Option<Url>, ui_test: bool) -> (ChannelList, Option<Updater>) {
     if let Some(channels) = m3u::load(Path::new(CHANNELS_FILE)) {
-        log!("lista di prova {CHANNELS_FILE}: {} canali", channels.len());
+        log!("test list {CHANNELS_FILE}: {} channels", channels.len());
         return (ChannelList::new(channels), None);
     }
     let (saved, updater) = Updater::start(Path::new(DATA_DIR), list);

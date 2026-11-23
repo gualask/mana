@@ -1,7 +1,9 @@
 //! The quality menu over the playing video: «Auto» and the heights the
 //! live stream offers, highest first, chosen with the remote.
 
-use mana_core::session::Quality;
+use mana_core::language::Language;
+use mana_core::session::{Quality, Stats};
+use mana_core::text;
 
 use super::gfx::Renderer;
 use super::hits::{Hits, Target};
@@ -39,14 +41,14 @@ impl QualityMenu {
     }
 
     /// Draws the menu as a translucent panel on the right of the screen,
-    /// marking the option in use; `s` scales the 1080p layout to the surface.
-    /// Records the options in `hits`.
-    pub fn draw(&self, r: &mut Renderer, t: &mut Text, s: f32, heights: &[u32], current: Quality, hits: &mut Hits) {
-        let options = options(heights);
+    /// with the heights the viewing offers, marking the option in use; `s`
+    /// scales the 1080p layout to the surface. Records the options in `hits`.
+    pub fn draw(&self, r: &mut Renderer, t: &mut Text, s: f32, stats: &Stats, hits: &mut Hits, language: Language) {
+        let (options, current) = (options(&stats.live.heights), stats.quality);
         let focus = self.focus.min(options.len() - 1);
         let (x, y, w, row) = (1440.0 * s, 120.0 * s, 420.0 * s, 64.0 * s);
         r.rect(x, y, w, (options.len() as f32 * 64.0 + 120.0) * s, PANEL.with_alpha(0.85));
-        t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, "Qualità");
+        t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &text!(language, "quality-title"));
         for (i, &option) in options.iter().enumerate() {
             let top = y + 90.0 * s + i as f32 * row;
             // The row's box: the focus colours it, the pointer finds it.
@@ -58,7 +60,7 @@ impl QualityMenu {
             let width = t.draw(r, x + 36.0 * s, top + 12.0 * s, 32.0 * s, TEXT, &label(option));
             let in_use_color = if i == focus { TEXT } else { MUTED };
             if option == current {
-                t.draw(r, x + 56.0 * s + width, top + 16.0 * s, 26.0 * s, in_use_color, "in uso");
+                t.draw(r, x + 56.0 * s + width, top + 16.0 * s, 26.0 * s, in_use_color, &text!(language, "quality-in-use"));
             }
         }
     }

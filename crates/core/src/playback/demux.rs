@@ -2,7 +2,7 @@
 //! rendition of its own merged in timestamp order, and the formats the
 //! decoder must be loaded for.
 
-use super::Error;
+use super::{DemuxError, Error};
 use super::ffmpeg::{self, Media, Read};
 use crate::log::{debug, log};
 
@@ -43,7 +43,7 @@ impl Formats {
         let video = match info.video_codec {
             ffmpeg::CODEC_H264 => VideoCodec::H264,
             ffmpeg::CODEC_HEVC => VideoCodec::H265,
-            _ => return Err(Error::Unsupported(format!("codec video non supportato: {}", info.describe()))),
+            _ => return Err(Error::VideoCodec(info.video())),
         };
         // An audio rendition of its own replaces any muxed audio.
         let audio_info = demux.audio.as_ref().map_or(info, |a| &a.info);
@@ -54,11 +54,11 @@ impl Formats {
             _ => None,
         };
         let description = match &demux.audio {
-            Some(audio) => format!("{} · traccia audio separata {}", info.describe_video(), audio.info.describe_audio()),
+            Some(audio) => format!("{} · separate audio track {}", info.describe_video(), audio.info.describe_audio()),
             None => info.describe(),
         };
         if audio_info.has_audio() && audio.is_none() {
-            log!("audio non supportato, riproduzione senza audio: {description}");
+            log!("audio not supported, playing without audio: {description}");
         }
         Ok((Self { video, width: info.width, height: info.height, audio }, description))
     }
@@ -120,7 +120,7 @@ impl Demux {
         Self { main, audio, next_video: None, next_audio: None, aligned: false, new_section: false }
     }
 
-    pub fn read(&mut self) -> Result<Packet, String> {
+    pub fn read(&mut self) -> Result<Packet, DemuxError> {
         if self.audio.is_none() {
             return read_sections(&mut self.main, Input::Whole, &mut self.new_section);
         }
@@ -145,7 +145,7 @@ impl Demux {
     }
 
     /// Back to the start of a local file, to loop it.
-    pub fn rewind(&mut self) -> Result<(), String> {
+    pub fn rewind(&mut self) -> Result<(), DemuxError> {
         self.main.rewind()
     }
 
@@ -164,7 +164,7 @@ impl Demux {
     /// segment between the two reads. Drops the head of the earlier input
     /// until both start together: audio up to the first video packet, video
     /// up to the keyframe where the audio starts.
-    fn align(&mut self) -> Result<(), String> {
+    fn align(&mut self) -> Result<(), DemuxError> {
         let mut dropped = (0, 0);
         loop {
             let video = match &self.next_video {
@@ -188,14 +188,14 @@ impl Demux {
             self.fill()?;
         }
         if dropped != (0, 0) {
-            log!("traccia audio e video allineate all'avvio: scartati {} pacchetti video e {} audio", dropped.0, dropped.1);
+            log!("audio and video tracks aligned at start: {} video and {} audio packets dropped", dropped.0, dropped.1);
         }
         self.aligned = true;
         Ok(())
     }
 
     /// Reads the next packet of each input that has none waiting.
-    fn fill(&mut self) -> Result<(), String> {
+    fn fill(&mut self) -> Result<(), DemuxError> {
         let Some(audio) = self.audio.as_mut() else { return Ok(()) };
         if self.next_video.is_none() {
             // Muxed audio: the rendition replaces it.
@@ -211,7 +211,7 @@ impl Demux {
 }
 
 /// The next packet of `media` that `skipped` does not drop.
-fn read_skipping(media: &mut Media, input: Input, new_section: &mut bool, skipped: fn(&Packet) -> bool) -> Result<Packet, String> {
+fn read_skipping(media: &mut Media, input: Input, new_section: &mut bool, skipped: fn(&Packet) -> bool) -> Result<Packet, DemuxError> {
     loop {
         let packet = read_sections(media, input, new_section)?;
         if !skipped(&packet) {
@@ -237,7 +237,7 @@ impl Input {
         match self {
             Self::Whole => media.info.describe(),
             Self::Video => format!("video {}", media.info.describe_video()),
-            Self::Audio => format!("traccia audio separata {}", media.info.describe_audio()),
+            Self::Audio => format!("separate audio track {}", media.info.describe_audio()),
         }
     }
 }
@@ -245,11 +245,11 @@ impl Input {
 /// Reads the next packet of `media`, moving on through the sections of its
 /// input: at a discontinuity streams and formats may change (Pluto TV's ad
 /// clips come with their own PIDs, some without audio).
-fn read_sections(media: &mut Media, input: Input, new_section: &mut bool) -> Result<Packet, String> {
+fn read_sections(media: &mut Media, input: Input, new_section: &mut bool) -> Result<Packet, DemuxError> {
     loop {
         match Packet::from(media.read()?) {
             Packet::Eof if media.next_section()? => {
-                debug!("nuova sezione: {}", input.describe(media));
+                debug!("new section: {}", input.describe(media));
                 *new_section = true;
             }
             packet => return Ok(packet.in_section(media.discontinuity_sequence())),

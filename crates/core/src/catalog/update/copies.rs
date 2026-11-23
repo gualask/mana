@@ -7,22 +7,23 @@ use std::sync::Arc;
 
 use url::Url;
 
-use super::{Job, Outcome, Update, list_url};
+use super::{Failure, Job, Outcome, Update, list_url};
 use crate::catalog::device::Device;
 use crate::catalog::list::{self, Entry, List};
-use crate::catalog::{Channel, m3u};
+use crate::catalog::{Channel, ChannelError, m3u};
+use crate::language::Language;
 use crate::log::log;
-use crate::net::{Client, loggable};
+use crate::net::{self, Client, loggable};
 
-/// The largest list or included M3U list read, as for HLS playlists.
-const MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// The folder of the copies, in the data directory.
-const COPIES: &str = "lista";
+const COPIES: &str = "list";
 /// The list's copy, and the URL it came from.
-const LIST_COPY: &str = "lista.toml";
-const LIST_URL: &str = "lista.url";
+const LIST_COPY: &str = "list.toml";
+const LIST_URL: &str = "list.url";
 /// The URL chosen, kept across power-offs.
-const CHOSEN_URL: &str = "scelta.url";
+const CHOSEN_URL: &str = "chosen.url";
+/// The extension of the copies of the included M3U lists.
+const M3U_COPY: &str = ".m3u";
 /// Unavailable channels named in the log, before only counting them.
 const LOGGED_UNAVAILABLE: usize = 10;
 
@@ -45,7 +46,7 @@ impl Copies {
         let outcome = match self.download(&job.url) {
             Outcome::Channels { channels, kept } if job.chosen => {
                 let kept = self.save(CHOSEN_URL, job.url.as_str()) && kept;
-                log!("lista scelta: {}", loggable(&job.url));
+                log!("list chosen: {}", loggable(&job.url));
                 Outcome::Channels { channels, kept }
             }
             outcome => outcome,
@@ -56,7 +57,7 @@ impl Copies {
     /// The URL chosen last, if any.
     pub(super) fn chosen(&self) -> Option<Url> {
         let text = std::fs::read_to_string(self.dir.join(CHOSEN_URL)).ok()?;
-        list_url(&text).inspect_err(|e| log!("lista scelta non valida: {e}")).ok()
+        list_url(&text).inspect_err(|e| log!("list chosen not valid: {e}")).ok()
     }
 
     /// The channels of the list saved, when it came from `url` or no URL is
@@ -67,9 +68,9 @@ impl Copies {
             return None;
         }
         let text = std::fs::read_to_string(self.dir.join(LIST_COPY)).ok()?;
-        let list = self.parse(&text).inspect_err(|e| log!("lista salvata non valida: {e}")).ok()?;
+        let list = self.parse(&text).inspect_err(|e| log!("saved list not valid: {e}")).ok()?;
         let channels = self.assemble(list, |url| self.copy_of(url));
-        log!("lista salvata: {} canali", channels.len());
+        log!("saved list: {} channels", channels.len());
         Some(channels)
     }
 
@@ -78,7 +79,7 @@ impl Copies {
         let (client, text, list) = match self.fetch_list(url) {
             Ok(fetched) => fetched,
             Err(reason) => {
-                log!("lista da {} non aggiornata: {reason}", loggable(url));
+                log!("list from {} not updated: {reason}", loggable(url));
                 return Outcome::Failed(reason);
             }
         };
@@ -86,15 +87,15 @@ impl Copies {
         let included: Vec<String> = list.entries.iter().filter_map(include_url).map(copy_name).collect();
         let channels = self.assemble(list, |included| self.download_included(&client, included));
         self.forget_others(&included);
-        log!("lista da {} aggiornata: {} canali", loggable(url), channels.len());
+        log!("list from {} updated: {} channels", loggable(url), channels.len());
         Outcome::Channels { channels, kept }
     }
 
     /// The client, the text at `url` and its list, when the text is TOML.
-    fn fetch_list(&self, url: &Url) -> Result<(Client, String, List), String> {
-        let client = Client::new()?;
+    fn fetch_list(&self, url: &Url) -> Result<(Client, String, List), Failure> {
+        let client = Client::new().map_err(Failure::Client)?;
         let text = fetch(&client, url)?;
-        let list = self.parse(&text).map_err(|e| format!("non è TOML valido: {e}"))?;
+        let list = self.parse(&text).map_err(Failure::List)?;
         Ok((client, text, list))
     }
 
@@ -107,14 +108,14 @@ impl Copies {
                 Some(text)
             }
             outcome => {
-                let reason = outcome.err().unwrap_or_else(|| "nessun canale".into());
-                log!("lista inclusa {} non scaricata: {reason}", loggable(url));
-                self.copy_of(url).inspect(|_| log!("lista inclusa {} dalla copia salvata", loggable(url)))
+                let reason = outcome.err().map_or_else(|| "no channels".into(), |e| e.to_string());
+                log!("included list {} not downloaded: {reason}", loggable(url));
+                self.copy_of(url).inspect(|_| log!("included list {} from the saved copy", loggable(url)))
             }
         }
     }
 
-    fn parse(&self, text: &str) -> Result<List, String> {
+    fn parse(&self, text: &str) -> Result<List, list::Error> {
         let device = self.device.clone();
         list::parse(text, move || device.id().map(str::to_string))
     }
@@ -130,7 +131,7 @@ impl Copies {
             .flat_map(|entry| match entry {
                 Entry::Channel(channel) => vec![channel],
                 Entry::Include(url) => included(&url).map(|text| m3u::parse(&text)).unwrap_or_else(|| {
-                    skipped.push(format!("lista inclusa {} saltata", loggable(&url)));
+                    skipped.push(format!("included list {} skipped", loggable(&url)));
                     Vec::new()
                 }),
             })
@@ -147,12 +148,12 @@ impl Copies {
     /// Writes the copy `name` whole, through a temporary file: a power-off
     /// meanwhile leaves the previous one. Returns whether it was written.
     fn save(&self, name: &str, text: &str) -> bool {
-        let (path, temporary) = (self.dir.join(name), self.dir.join(format!("{name}.nuovo")));
+        let (path, temporary) = (self.dir.join(name), self.dir.join(format!("{name}.new")));
         let saved = std::fs::create_dir_all(&self.dir)
             .and_then(|()| std::fs::write(&temporary, text))
             .and_then(|()| std::fs::rename(&temporary, &path));
         if let Err(error) = &saved {
-            log!("copia {} non salvata: {error}", path.display());
+            log!("copy {} not saved: {error}", path.display());
         }
         saved.is_ok()
     }
@@ -162,7 +163,7 @@ impl Copies {
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return };
         for path in entries.filter_map(|e| e.ok().map(|e| e.path())) {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            if name.ends_with(".m3u") && !included.contains(&name) {
+            if name.ends_with(M3U_COPY) && !included.contains(&name) {
                 drop(std::fs::remove_file(&path));
             }
         }
@@ -171,13 +172,14 @@ impl Copies {
 
 /// Logs what the list left out, and the channels that cannot be played.
 fn log_left_out(skipped: &[String], channels: &[Channel]) {
-    skipped.iter().for_each(|reason| log!("lista: {reason}"));
-    let unavailable: Vec<&Channel> = channels.iter().filter(|c| c.play.is_err()).collect();
-    for channel in unavailable.iter().take(LOGGED_UNAVAILABLE) {
-        log!("lista: {} non disponibile: {}", channel.name, channel.play.as_ref().err().map_or("", String::as_str));
+    skipped.iter().for_each(|reason| log!("list: {reason}"));
+    let unavailable: Vec<(&Channel, &ChannelError)> =
+        channels.iter().filter_map(|c| c.play.as_ref().err().map(|error| (c, error))).collect();
+    for (channel, error) in unavailable.iter().take(LOGGED_UNAVAILABLE) {
+        log!("list: {} unavailable: {error}", channel.title(Language::English));
     }
     if unavailable.len() > LOGGED_UNAVAILABLE {
-        log!("lista: altri {} canali non disponibili", unavailable.len() - LOGGED_UNAVAILABLE);
+        log!("list: {} more channels unavailable", unavailable.len() - LOGGED_UNAVAILABLE);
     }
 }
 
@@ -195,11 +197,11 @@ fn copy_name(url: &Url) -> String {
     let hash = url.as_str().bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, b| {
         (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
-    format!("{hash:016x}.m3u")
+    format!("{hash:016x}{M3U_COPY}")
 }
 
-/// The text at `url`, of at most MAX_BYTES.
-fn fetch(client: &Client, url: &Url) -> Result<String, String> {
-    let body = client.get(url, MAX_BYTES).map_err(|e| e.to_string())?;
-    String::from_utf8(body).map_err(|_| "non è testo UTF-8".into())
+/// The text at `url`, of at most MAX_TEXT_BYTES.
+fn fetch(client: &Client, url: &Url) -> Result<String, Failure> {
+    let body = client.get(url, net::MAX_TEXT_BYTES).map_err(Failure::Network)?;
+    String::from_utf8(body).map_err(|_| Failure::NotUtf8)
 }

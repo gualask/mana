@@ -76,7 +76,7 @@ mod tests {
         stats.playback.presented_ms = Some(0);
         assert!(!waiting(&stats));
         stats.playback.presented_ms = None;
-        stats.state = State::Failed("rete assente".into());
+        stats.state = State::Failed(mana_core::session::Failure::Thread("no network".into()));
         assert!(!waiting(&stats));
     }
 }

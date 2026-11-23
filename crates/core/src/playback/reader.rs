@@ -6,7 +6,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::Error;
+use super::{DemuxError, Error};
 use super::demux::{Demux, Formats, Packet};
 
 /// Packets read ahead of the feeder: a fraction of a second.
@@ -20,7 +20,7 @@ pub enum Demuxed {
     Section { formats: Option<(Formats, String)>, without_audio: bool },
     /// A local file started again from its beginning.
     Looped,
-    Failed(String),
+    Failed(DemuxError),
 }
 
 pub struct Reader {
@@ -42,7 +42,7 @@ impl Reader {
         let thread = std::thread::Builder::new()
             .name("demux".into())
             .spawn(move || read_ahead(demux, loop_file, &sender))
-            .map_err(|e| Error::Failed(e.to_string()))?;
+            .map_err(|e| Error::Thread(e.to_string()))?;
         Ok(Self { formats, without_audio, demuxed, thread })
     }
 
@@ -51,7 +51,7 @@ impl Reader {
         match self.demuxed.recv_timeout(wait) {
             Ok(next) => Ok(Some(next)),
             Err(RecvTimeoutError::Timeout) => Ok(None),
-            Err(RecvTimeoutError::Disconnected) => Err(Error::Failed("demuxer interrotto".into())),
+            Err(RecvTimeoutError::Disconnected) => Err(Error::DemuxerGone),
         }
     }
 
