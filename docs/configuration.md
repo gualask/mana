@@ -109,6 +109,7 @@ There is no conditional between steps: choices live only in routes.
 | `text.match` | text → text | `from`, `pattern` (one group) |
 | `list.map` | list → list | `list`; `item` (each field a template, `{ from, pattern }`, or `{ from, format, zone }` as `date` reads it), or `call` and `input` to make each entry the result of a recipe (`{item}` is the entry); `where` (fields equal to templates); `present` (fields there and not empty) |
 | `text` | → text | `template` |
+| `record` | → item fields | `fields`, each as an `item` field of `list.map`: the record a recipe gives for each entry of `list.map` with `call`, when its fields are nested deeper than a template over the entry reaches |
 | `date` | text → text | `from`, `format` (`%Y %m %d %H %M %S` and text, or `unix`, `unix_ms`), `zone` (`+08:00`, UTC when absent): the instant as RFC 3339 in UTC, as an item's `starts_at` |
 | `url.param` | text → text (decoded) | `from`, `name` |
 | `url.query_after` | text → text (raw, to the end) | `from`, `name` |
@@ -150,7 +151,8 @@ rejects, naming the flow and the step:
   themselves;
 - a pattern without exactly one group, a selector lol_html does not accept;
 - a flow whose last step cannot give its result: a list with `id` (and
-  `title` for a catalogue), or a stream, a next candidate or a `call`.
+  `title` for a catalogue, also in the `record` a `list.map` recipe ends
+  on), or a stream, a next candidate or a `call`.
 
 The [JSON Schema](../schemas/source.schema.json) describes the structure
 for editors; the rules beyond it are the Rust validation's.

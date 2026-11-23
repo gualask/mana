@@ -1,7 +1,8 @@
 # Signed binary catalogue: a ROT47 configuration names the player origin every
 # request sends; catalogue and detail are signed with a version per request
 # code and an MD5 prefix of the query; answers are Protobuf, lists are
-# repeated messages; the session is sealed with AES-256-CTR under a key
+# repeated messages, an event's names nested in them and built into a record
+# by a recipe; the session is sealed with AES-256-CTR under a key
 # written as text, and goes base64 into the media path.
 id = "lab-binary"
 name = "Lab signed binary catalogue"
@@ -47,17 +48,11 @@ recipe = "signed"
 input = { kind = "live", code = "100", query = "{query}", origin = "{origin}" }
 
 [[catalogue.steps]]
-id = "matches"
-op = "list.map"
-list = "{live.1}"
-call = "message"
-input = { bytes = "{item}" }
-
-[[catalogue.steps]]
 id = "events"
 op = "list.map"
-list = "{matches}"
-item = { id = "{item.1.0}", title = "{item.19.0}", origin = "{origin}" }
+list = "{live.1}"
+call = "event"
+input = { bytes = "{item}", origin = "{origin}" }
 
 [[sources.steps]]
 id = "query"
@@ -153,6 +148,66 @@ url = "{origin}/token-{token|component}a{path}"
 headers = { User-Agent = "StreamLab/1", Referer = "{input.candidate.origin}/", X-Lab-Media = "synthetic" }
 
 # A Protobuf message, for list.map to decode each entry of a list.
+# A match: field 1 its id, 3 its start in ms, 10 the competition, 30 a title
+# then the two teams, each name in field 2 of the translation at 3.
+[recipes.event]
+inputs = ["bytes", "origin"]
+
+[[recipes.event.steps]]
+id = "match"
+op = "protobuf"
+from = "{input.bytes}"
+
+[[recipes.event.steps]]
+id = "home"
+op = "call"
+recipe = "name"
+input = { bytes = "{match.30.1}" }
+
+[[recipes.event.steps]]
+id = "away"
+op = "call"
+recipe = "name"
+input = { bytes = "{match.30.2}" }
+
+[[recipes.event.steps]]
+id = "competition"
+op = "protobuf"
+from = "{match.10.0}"
+
+[[recipes.event.steps]]
+id = "competition_name"
+op = "protobuf"
+from = "{competition.3.0}"
+
+[[recipes.event.steps]]
+id = "event"
+op = "record"
+fields = { id = "{match.1.0}", title = "{home} - {away}", group = "{competition_name.2.0}", starts_at = { from = "{match.3.0}", format = "unix_ms" }, origin = "{input.origin}" }
+
+[recipes.name]
+inputs = ["bytes"]
+
+[[recipes.name.steps]]
+id = "entry"
+op = "protobuf"
+from = "{input.bytes}"
+
+[[recipes.name.steps]]
+id = "team"
+op = "protobuf"
+from = "{entry.10.0}"
+
+[[recipes.name.steps]]
+id = "translation"
+op = "protobuf"
+from = "{team.3.0}"
+
+[[recipes.name.steps]]
+id = "name"
+op = "text"
+template = "{translation.2.0}"
+
 [recipes.message]
 inputs = ["bytes"]
 

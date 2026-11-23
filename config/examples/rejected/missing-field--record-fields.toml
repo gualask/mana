@@ -1,0 +1,12 @@
+# A `record` without its `fields`.
+id = "rejected"
+name = "A case to reject"
+
+[[resolve.steps]]
+id = "fields"
+op = "record"
+
+[[resolve.steps]]
+id = "stream"
+op = "stream"
+url = "http://127.0.0.1:8783/public/master.m3u8"

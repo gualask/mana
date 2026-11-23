@@ -374,52 +374,7 @@
               "$ref": "#/$defs/template"
             },
             "item": {
-              "type": "object",
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/template"
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "from": {
-                        "$ref": "#/$defs/template"
-                      },
-                      "pattern": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "from",
-                      "pattern"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "from": {
-                        "$ref": "#/$defs/template"
-                      },
-                      "format": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "zone": {
-                        "type": "string",
-                        "pattern": "^(Z|[+-][0-9]{2}:[0-9]{2})$"
-                      }
-                    },
-                    "required": [
-                      "from",
-                      "format"
-                    ],
-                    "additionalProperties": false
-                  }
-                ]
-              }
+              "$ref": "#/$defs/fields"
             },
             "where": {
               "$ref": "#/$defs/templates"
@@ -493,6 +448,26 @@
             "id",
             "op",
             "template"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/step_id"
+            },
+            "op": {
+              "const": "record"
+            },
+            "fields": {
+              "$ref": "#/$defs/fields"
+            }
+          },
+          "required": [
+            "id",
+            "op",
+            "fields"
           ],
           "additionalProperties": false
         },
@@ -955,6 +930,54 @@
         "use"
       ],
       "additionalProperties": false
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/template"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/template"
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "from",
+              "pattern"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/template"
+              },
+              "format": {
+                "type": "string",
+                "minLength": 1
+              },
+              "zone": {
+                "type": "string",
+                "pattern": "^(Z|[+-][0-9]{2}:[0-9]{2})$"
+              }
+            },
+            "required": [
+              "from",
+              "format"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
     }
   }
 }

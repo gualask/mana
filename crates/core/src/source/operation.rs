@@ -30,6 +30,10 @@ pub enum Operation {
     /// and whose fields `present` are there and not empty.
     ListMap { list: Template, map: Mapping, filter: BTreeMap<String, Template>, present: Vec<String> },
     Text { template: Template },
+    /// Fields made into one record, as `list.map` makes each entry's
+    /// `item`: what a recipe gives for each entry of a list, when the
+    /// fields are nested deeper than a template over the entry reaches.
+    Record { fields: BTreeMap<String, Field> },
     /// A query parameter, decoded.
     UrlParam { from: Template, name: String },
     /// The query after `name=`, as it is, to its end.
@@ -191,19 +195,18 @@ impl Operation {
             "list.map" => {
                 let f = fields(&["list", "item", "call", "input", "where", "present"])?;
                 let map = match (f.table("item")?, f.text("call")?) {
-                    (Some(item), None) if f.get("input").is_none() => {
-                        let mut fields = BTreeMap::new();
-                        for (name, value) in item {
-                            fields.insert(name.clone(), field(&format!("{at}.item"), name, value)?);
-                        }
-                        Mapping::Fields(fields)
-                    }
+                    (Some(item), None) if f.get("input").is_none() => Mapping::Fields(fields_of(&format!("{at}.item"), item)?),
                     (None, Some(recipe)) => Mapping::Call { recipe, input: f.templates("input")? },
                     _ => return Err(Error::OneOf { at: at.into(), choices: "`item`, `call` with its `input`".into() }),
                 };
                 Self::ListMap { list: f.required_template("list")?, map, filter: f.templates("where")?, present: f.texts("present")? }
             }
             "text" => Self::Text { template: fields(&["template"])?.required_template("template")? },
+            "record" => {
+                let f = fields(&["fields"])?;
+                let table = f.table("fields")?.ok_or_else(|| f.missing("fields"))?;
+                Self::Record { fields: fields_of(&format!("{at}.fields"), table)? }
+            }
             "date" => {
                 let f = fields(&["from", "format", "zone"])?;
                 let format = f.required_text("format")?;
@@ -294,6 +297,7 @@ impl Operation {
             Self::Base64Decode { .. } | Self::HexDecode { .. } | Self::BytesXor { .. } => Kind::Bytes,
             Self::AesDecrypt { .. } | Self::AesEncrypt { .. } => Kind::Bytes,
             Self::Call { .. } => Kind::Any,
+            Self::Record { .. } => Kind::Fields,
             Self::Stream { .. } => Kind::Stream,
             Self::Next { .. } => Kind::Next,
             Self::HtmlAttr { .. } | Self::TextMatch { .. } | Self::Text { .. } | Self::UrlParam { .. } => Kind::Text,
@@ -304,7 +308,8 @@ impl Operation {
 
     /// Each template of the step, with what it must give. Those of
     /// `list.map` but its `list` are not here: they read the entry
-    /// (`{item.…}`).
+    /// (`{item.…}`); nor are the fields of `record`, which may be
+    /// patterns and dates.
     pub fn parameters(&self) -> Vec<(&'static str, &Template, Kind)> {
         use Kind::*;
         let mut parameters = match self {
@@ -337,6 +342,7 @@ impl Operation {
             }
             Self::AesEncrypt { key, iv, data } => vec![("key", key, Data), ("iv", iv, Data), ("data", data, Data)],
             Self::Call { input, .. } => input.values().map(|t| ("input", t, Any)).collect(),
+            Self::Record { .. } => Vec::new(),
             Self::Stream { url, expires_at, .. } => {
                 let mut p = vec![("url", url, Text)];
                 p.extend(expires_at.iter().map(|t| ("expires_at", t, Text)));
@@ -349,6 +355,11 @@ impl Operation {
         }
         parameters
     }
+}
+
+/// The fields of a `list.map` item or of a `record`.
+fn fields_of(at: &str, table: &serde_json::Map<String, Value>) -> Result<BTreeMap<String, Field>, Error> {
+    table.iter().map(|(name, value)| Ok((name.clone(), field(at, name, value)?))).collect()
 }
 
 fn field(at: &str, name: &str, value: &Value) -> Result<Field, Error> {

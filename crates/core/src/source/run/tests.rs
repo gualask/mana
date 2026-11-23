@@ -239,7 +239,13 @@ fn binary_web() -> (Web, String) {
     };
     let config = serde_json::json!({"common:web:client": serde_json::json!({"trd": {"iframePlayerDomains": ["127.0.0.1:8782"]}}).to_string()});
     let versions = [bytes_field(1, &[number_field(1, 100), bytes_field(2, b"a1")].concat()), bytes_field(1, &[number_field(1, 102), bytes_field(2, b"b2")].concat())].concat();
-    let matches = [bytes_field(1, &[number_field(1, 7001), bytes_field(19, b"Synthetic derby")].concat()), bytes_field(1, &[number_field(1, 7002), bytes_field(19, b"Empty")].concat())].concat();
+    let translated = |name: &str| bytes_field(3, &[number_field(1, 8), bytes_field(2, name.as_bytes())].concat());
+    let team = |name: &str| bytes_field(30, &[number_field(1, 1), bytes_field(10, &translated(name))].concat());
+    let event = |id: u64, home: &str, away: &str, start: u64| {
+        let title = bytes_field(30, &bytes_field(2, format!("{home} vs {away}").as_bytes()));
+        bytes_field(1, &[number_field(1, id), number_field(3, start), bytes_field(10, &translated("Lab League")), title, team(home), team(away)].concat())
+    };
+    let matches = [event(7001, "Lab North", "Lab South", 1795474800000), event(7002, "Lab East", "Lab West", 1795478400000)].concat();
     let streams = [bytes_field(2, &[number_field(1, 501), bytes_field(3, b"Feed"), number_field(9, 2001)].concat())].concat();
     let url = rot47(&format!("lab-v1::{MEDIA}/session/master.m3u8"));
     let stream = bytes_field(2, &[number_field(1, 501), bytes_field(4, url.as_bytes())].concat());
@@ -263,7 +269,11 @@ fn a_signed_binary_catalogue_runs_through_recipes_and_lists_of_messages() {
     let (web, token) = binary_web();
     let mut engine = web.engine(&source);
     let events = engine.catalogue().unwrap();
-    assert_eq!(events.iter().map(|e| (e.fields["id"].as_str(), e.fields["title"].as_str())).collect::<Vec<_>>(), [("7001", "Synthetic derby"), ("7002", "Empty")]);
+    let shown = events.iter().map(|e| (e.fields["id"].as_str(), e.fields["title"].as_str(), e.fields["group"].as_str(), e.fields["starts_at"].as_str()));
+    assert_eq!(
+        shown.collect::<Vec<_>>(),
+        [("7001", "Lab North - Lab South", "Lab League", "2026-11-23T23:00:00Z"), ("7002", "Lab East - Lab West", "Lab League", "2026-11-24T00:00:00Z")]
+    );
     assert_eq!(events[0].fields["origin"], PLAYER);
     let signed = web.asked.borrow().iter().skip(1).map(|r| r.headers.clone()).collect::<Vec<_>>();
     assert!(signed.iter().all(|h| h.contains(&("Origin".into(), PLAYER.into()))), "{signed:?}");

@@ -98,6 +98,7 @@ fn pure(operation: &Operation, scope: &Scope) -> Result<Value, String> {
         Operation::Protobuf { from } => protobuf(&scope.fill(from)?.bytes()?)?,
         Operation::TextMatch { from, pattern } => Value::Text(group(pattern, &scope.text(from)?)?),
         Operation::Text { template } => Value::Text(scope.text(template)?),
+        Operation::Record { fields } => Value::Record(record(fields, scope)?),
         Operation::Date { from, format, zone } => Value::Text(date(&scope.text(from)?, format, zone)?),
         Operation::UrlParam { from, name } => {
             let url = Url::parse(&scope.text(from)?).map_err(|e| format!("not a URL: {e}"))?;
@@ -191,7 +192,8 @@ fn keep(entry: &Value, filter: &BTreeMap<String, crate::source::Template>, scope
     Ok(true)
 }
 
-/// The fields of `list.map`'s `item` for one entry, as text.
+/// The fields of `list.map`'s `item` for one entry, or of a `record`, as
+/// text.
 fn record(fields: &BTreeMap<String, Field>, scope: &Scope) -> Result<BTreeMap<String, Value>, String> {
     let mut record = BTreeMap::new();
     for (name, field) in fields {

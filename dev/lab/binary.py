@@ -5,7 +5,9 @@ later request must send. Catalogue and detail requests are signed: a first
 call gives a version per request code, and the path starts with
 `/bin/v` + the first six hex digits of the query's MD5 + that version.
 Answers wrap a message in field 10 of an envelope; lists are repeated
-messages. The stream URL is ROT47 after an eight-character prefix; the
+messages. A match nests its names: field 10 the competition, field 30 a
+title then the two teams, each name in a translation (language, name);
+field 3 its start in milliseconds. The stream URL is ROT47 after an eight-character prefix; the
 session, in a response header, is encrypted with AES-256-CTR under a key
 and IV written as text in the app, then base64 (standard alphabet),
 percent-encoded, with an `a` appended, and goes into the media path.
@@ -24,7 +26,8 @@ from .state import TTL, UA, binary_field, crypto, rot47, varint
 KEY = 'lab-binary-key-0123456789abcdefg'
 IV = 'lab-binary-iv-01'
 CODES = {'live': 100, 'detail': 102}
-MATCHES = [(7001, 'Synthetic derby'), (7002, 'Fixture without streams')]
+MATCHES = [(7001, 'Lab North', 'Lab South', 1795474800000), (7002, 'Lab East', 'Lab West', 1795478400000)]
+LEAGUE = 'Lab League'
 STREAMS = {7001: [(501, 'Synthetic feed', 2001), (502, 'Second feed', 2001)], 7002: []}
 
 
@@ -34,6 +37,16 @@ def number_field(number, value):
 
 def text_field(number, value):
     return binary_field(number, value.encode())
+
+
+def translated(name):
+    return binary_field(3, number_field(1, 8) + text_field(2, name))
+
+
+def match(id, home, away, start):
+    teams = b''.join(binary_field(30, number_field(1, 1) + binary_field(10, translated(team))) for team in (home, away))
+    return (number_field(1, id) + number_field(3, start) + binary_field(10, translated(LEAGUE))
+            + binary_field(30, text_field(2, f'{home} vs {away}')) + teams)
 
 
 def envelope(inner):
@@ -73,7 +86,7 @@ def handle(state, path, query, headers):
         if prefix != hashlib.md5(urlencode(values).encode()).hexdigest()[:6] or version != state.binary_versions[CODES[kind]]:
             return denied('bad_signature')
         if kind == 'live':
-            matches = b''.join(binary_field(1, number_field(1, id) + text_field(19, name)) for id, name in MATCHES)
+            matches = b''.join(binary_field(1, match(*entry)) for entry in MATCHES)
             return answer(envelope(matches))
         streams = STREAMS.get(int(values.get('matchId', '0')), [])
         body = b''.join(binary_field(2, number_field(1, id) + text_field(3, name) + number_field(9, site))
