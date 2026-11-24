@@ -172,8 +172,11 @@ impl<'a> Feeder<'a> {
             log!("{error}");
             return;
         }
+        self.backend.finish();
         let draining = Instant::now();
-        while self.displayed().is_some_and(|us| us < self.timeline.reached())
+        // Nothing shown yet is not the end: a file shorter than the lead is
+        // all fed before its first picture.
+        while self.displayed().is_none_or(|us| us < self.timeline.reached())
             && draining.elapsed() < DRAIN_TIMEOUT
             && !self.stop.load(Ordering::Relaxed)
         {

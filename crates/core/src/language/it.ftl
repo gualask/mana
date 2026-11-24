@@ -228,3 +228,9 @@ phone-done = Fatto: puoi chiudere questa pagina.
 phone-settings-closed = Impostazioni chiuse sulla TV.
 phone-still-downloading = La TV sta ancora scaricando la lista: guarda la TV.
 phone-closed-meanwhile = Impostazioni chiuse sulla TV: guarda la TV per l'esito.
+
+## Desktop
+
+desktop-list-not-set = Nessuna lista: avvia Mana con --list e l'indirizzo della lista
+desktop-hint = ↑ ↓ riga · ← → pagina · Invio sceglie · Esc indietro
+desktop-folder = cartella

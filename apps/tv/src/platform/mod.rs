@@ -1,7 +1,6 @@
 //! Platform integration: process environment, SDL window, input mapping
 //! and the TV's language.
 
-pub mod clock;
 pub mod keys;
 pub mod locale;
 pub mod pointer;

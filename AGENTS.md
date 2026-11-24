@@ -2,7 +2,7 @@
 
 ## Verifying a change
 
-- Everywhere: `cargo test`, plus `python3 -B -m unittest discover -s dev/lab/tests` when `dev/lab/` changes. The other checks are listed in [docs/development.md](docs/development.md#checks).
+- Everywhere: `cargo test`, plus `python3 -B -m unittest discover -s dev/lab/tests` when `dev/lab/` changes. The desktop app is not a default member: `cargo test --workspace` when it, the core's `decoder` feature or the workspace changes. The other checks are listed in [docs/development.md](docs/development.md#checks).
 - TV code, build flags or `tools/webos/`: run `cargo zigbuild --release --target armv7-unknown-linux-gnueabi.2.28`, then `python3 tools/webos/package.py`. A desktop build proves nothing for the TV. The packager is also the test: it fails on the wrong zig or cargo-zigbuild version, software float calls, glibc above 2.28, or a library or function missing from a webOS 6–11 firmware ([docs/tv-app.md](docs/tv-app.md#package-checks)). The first build needs `python3 tools/webos/ffmpeg.py`.
 - Rust, zig and cargo-zigbuild are pinned (`rust-toolchain.toml`, `tools/webos/target.py`). Bump them only on purpose, after the package checks pass and the app plays on the TV.
 

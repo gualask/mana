@@ -1,12 +1,10 @@
-//! Compiles the local time's C (every platform), and decides the webOS
-//! build, the only 32-bit ARM Linux target: the code asks `cfg(webos)`.
+//! Decides the webOS build, the only 32-bit ARM Linux target: the code
+//! asks `cfg(webos)`.
 //! There it compiles the crash handler and tells the binary where the
 //! FFmpeg bundled with it is (arguments from the core's build script,
 //! which links it, do not reach the binary).
 
 fn main() {
-    println!("cargo::rerun-if-changed=src/platform/clock.c");
-    cc::Build::new().file("src/platform/clock.c").compile("mana_clock");
     println!("cargo::rustc-check-cfg=cfg(webos)");
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();

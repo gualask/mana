@@ -6,18 +6,17 @@
 use std::collections::BTreeMap;
 
 use mana_core::language::{Language, Localized};
-use mana_core::session::{Candidates, Failure, Program, State, Stats};
+use mana_core::session::{Candidates, Failure, Program, State, Stats, chosen_at_once};
 use mana_core::source::Selection;
 use mana_core::source::run::{self, Candidate};
 use mana_core::text;
 
 use super::App;
-use super::channel_list;
 use super::gfx::Renderer;
 use super::hits::{Hits, Target};
 use super::text::Text;
 use super::{BACKGROUND as PANEL, FOCUS, MUTED, TEXT};
-use crate::platform::clock;
+use mana_core::clock;
 
 /// Rows shown at once; the list scrolls past them.
 const ROWS: usize = 12;
@@ -123,7 +122,7 @@ impl SignalsMenu {
         t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &format!("{} · {}", text!(language, "signals-title"), self.name));
         let now = clock::now();
         if let Some(at) = self.selection.item.starts_at().filter(|&at| at > now) {
-            let note = text!(language, "signals-not-started", time = channel_list::time(at, now));
+            let note = text!(language, "signals-not-started", time = clock::time(at, now));
             t.draw(r, x + 30.0 * s, y + 62.0 * s, 22.0 * s, MUTED, &note);
         }
         let note = match &self.signals {
@@ -143,7 +142,7 @@ impl SignalsMenu {
                 r.rect(bx, top, bw, bh, FOCUS);
             }
             let colour = if i == self.focus { TEXT } else { MUTED };
-            let width = t.draw(r, x + 36.0 * s, top + 12.0 * s, 32.0 * s, TEXT, &label(candidate, i));
+            let width = t.draw(r, x + 36.0 * s, top + 12.0 * s, 32.0 * s, TEXT, &candidate.label(i));
             let id = candidate.fields.get("id");
             let mark = if id.is_some() && id == self.in_use.as_ref() {
                 Some(text!(language, "signals-in-use"))
@@ -162,11 +161,6 @@ impl SignalsMenu {
     }
 }
 
-/// How a candidate reads: its label, else its id, else its number.
-fn label(candidate: &Candidate, index: usize) -> String {
-    let field = |key: &str| candidate.fields.get(key).filter(|v| !v.is_empty()).cloned();
-    field("label").or_else(|| field("id")).unwrap_or_else(|| format!("{}", index + 1))
-}
 
 impl App {
     /// Plays the signal at `index` of the menu, which stays for Left.
@@ -185,7 +179,7 @@ impl App {
     /// opens the menu again when the signal in use failed.
     pub(super) fn refresh_signals(&mut self) {
         let Some(menu) = &mut self.signals else { return };
-        if menu.refresh() && menu.candidates().len() == 1 {
+        if menu.refresh() && chosen_at_once(menu.candidates()).is_some() {
             self.play_signal(0);
             return;
         }
@@ -222,7 +216,7 @@ mod tests {
     #[test]
     fn a_signal_reads_as_its_label_else_its_id_else_its_number() {
         let menu = menu();
-        let labels: Vec<String> = menu.candidates().iter().enumerate().map(|(i, c)| label(c, i)).collect();
+        let labels: Vec<String> = menu.candidates().iter().enumerate().map(|(i, c)| c.label(i)).collect();
         assert_eq!(labels, ["Main", "b", "3"]);
     }
 

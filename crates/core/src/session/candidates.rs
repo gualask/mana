@@ -49,6 +49,15 @@ impl Candidates {
     }
 }
 
+/// The candidate to play without asking the viewer: an item's only one.
+/// With several, the viewer chooses: Mana never passes to another by itself.
+pub fn chosen_at_once(found: &[Candidate]) -> Option<&Candidate> {
+    match found {
+        [only] => Some(only),
+        _ => None,
+    }
+}
+
 /// Why no request could be made, as the system says.
 fn failure(detail: String) -> Failure {
     Failure { outcome: Outcome::NetworkError, at: "sources".into(), cause: Cause::Problem(detail) }

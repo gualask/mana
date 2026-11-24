@@ -13,7 +13,7 @@ use super::hits::{Hits, Target};
 use super::logos::Logos;
 use super::text::Text;
 use super::{BACKGROUND as PANEL, ERROR, FOCUS, MUTED, OK, TEXT};
-use crate::platform::clock;
+use mana_core::clock;
 
 const VISIBLE_ROWS: usize = 12;
 /// Rows moved by Left/Right.
@@ -231,17 +231,7 @@ pub(super) fn label(channel: &Channel, language: Language) -> Cow<'_, str> {
 /// When an event starts, in the TV's local time: `20:30` today, else with
 /// the day, `24/11 20:30`; None for a channel.
 pub(super) fn starts(channel: &Channel, now: i64) -> Option<String> {
-    Some(time(channel.starts_at?, now))
-}
-
-/// The instant `at`, in seconds since 1970, in the TV's local time: `20:30`
-/// on the day of `now`, else with the day, `24/11 20:30`.
-pub(super) fn time(at: i64, now: i64) -> String {
-    let at = clock::local(at);
-    let (day, today) = (at.div_euclid(86_400), clock::local(now).div_euclid(86_400));
-    let date = mana_core::source::date::rfc3339(at);
-    let time = &date[11..16];
-    if day == today { time.to_string() } else { format!("{}/{} {time}", &date[8..10], &date[5..7]) }
+    Some(clock::time(channel.starts_at?, now))
 }
 
 /// The colour of an event's time: that of a live stream once it started.

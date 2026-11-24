@@ -47,16 +47,24 @@ fn main() {
     );
     println!("cargo::rerun-if-changed={}", ffmpeg.include.join("libavformat/version.h").display());
     println!("cargo::rerun-if-changed=src/playback/ffmpeg");
-    cc::Build::new()
+    println!("cargo::rerun-if-changed=src/clock.c");
+    // The desktop decodes too (feature `decoder`): the TV decodes in Starfish.
+    let decoder = std::env::var_os("CARGO_FEATURE_DECODER").is_some();
+    // The local time, for the times of events: time_t is 32 bits on the TV.
+    cc::Build::new().file("src/clock.c").compile("mana_clock");
+    let mut build = cc::Build::new();
+    build
         .file("src/playback/ffmpeg/shim.c")
         .file("src/playback/ffmpeg/probe.c")
         .file("src/playback/ffmpeg/mp4.c")
-        .file("src/playback/ffmpeg/transcoder.c")
-        .include(&ffmpeg.include)
-        .flag("-Wno-deprecated-declarations")
-        .compile("mana_ffmpeg");
+        .file("src/playback/ffmpeg/transcoder.c");
+    if decoder {
+        build.file("src/playback/ffmpeg/decoder.c");
+    }
+    build.include(&ffmpeg.include).flag("-Wno-deprecated-declarations").compile("mana_ffmpeg");
     println!("cargo::rustc-link-search=native={}", ffmpeg.lib.display());
-    for lib in ["avformat", "avcodec", "avutil"] {
+    let decoding: &[&str] = if decoder { &["swscale", "swresample"] } else { &[] };
+    for lib in ["avformat", "avcodec", "avutil"].iter().chain(decoding) {
         println!("cargo::rustc-link-lib=dylib={lib}");
     }
 }

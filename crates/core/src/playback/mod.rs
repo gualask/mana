@@ -44,6 +44,11 @@ pub trait Backend {
 
     /// Resumes presentation after `pause`; false when the decoder refuses.
     fn resume(&mut self) -> bool;
+
+    /// No more data will come: a decoder that holds pictures back, to
+    /// decode on several threads, lets them out. Nothing to do for one that
+    /// presents all it was fed.
+    fn finish(&mut self) {}
 }
 
 /// Makes a new backend, on the feeding thread, each time a decoder is

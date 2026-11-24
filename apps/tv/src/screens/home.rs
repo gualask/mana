@@ -14,7 +14,8 @@ use super::hits::Target;
 use super::list_updates::ListState;
 use super::text::Text;
 use super::{App, BACKGROUND, ERROR, FOCUS, MUTED, Outcome, ROW, TEXT};
-use crate::platform::{DATA_DIR, clock};
+use crate::platform::DATA_DIR;
+use mana_core::clock;
 use crate::platform::keys::Action;
 
 /// Test clips are copied here over SSH (see dev/tv/clips.py).

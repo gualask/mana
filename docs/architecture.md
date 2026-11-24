@@ -176,7 +176,7 @@ crates/core/                # mana-core: no UI and no platform dependency
     source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs, read from the file in operation/read.rs), checks (validate.rs), engine (run/: flows and limits, values and templates, operations, with the formats they read and AES in ops/)
     catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), folders of the sources' catalogues (folder.rs), search by name (search.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
-    net.rs, log.rs, adts.rs
+    net.rs, log.rs, adts.rs, clock.rs (local time of events, with clock.c)
 apps/
   tv/                       # mana-tv, binary `mana`
     build.rs                # cfg(webos), crash.c, linker arguments of the binary
@@ -188,7 +188,7 @@ apps/
       platform/             # SDL, keys, Magic Remote pointer, TV locale (locale.rs), CPU AES instructions, Starfish backend, data folder
       settings.rs           # mana.conf in the data folder, then /tmp/mana.conf
       autotest.rs           # automatic start, zapping, interface trial; frame statistics in autotest/frames.rs
-  desktop/                  # mana-desktop, to be built: Rune UI and desktop backend
+  desktop/                  # mana-desktop, alpha: state (app.rs, with levels and keys in app/), drawing (view.rs), backend decoding in software (backend/: video, audio, clock)
 ```
 
 `session` exists because two clients, the TV and the automated trials, and
@@ -212,7 +212,14 @@ The desktop app will be distributed for macOS, Windows and possibly Linux:
 - **Own backend** on the `playback::Backend` port, so the desktop uses the
   TV's demux, timeline and feeder. FFmpeg decodes video in software, the same
   way on all three systems, into a texture and the audio output. libmpv is
-  the fallback if synchronisation costs too much.
+  the fallback if synchronisation costs too much. The decoding is the core's,
+  behind its `decoder` feature (`playback/ffmpeg/decoder.c`, with libswscale
+  and libswresample), which only the desktop enables; pictures go to
+  `NativeSurface` as NV12 when the clock reaches them, a late one dropped,
+  and the audio goes to the system's output through `cpal`, whose samples
+  move the clock. While a video plays the display stays awake, through the
+  IOKit assertion mpv and VLC take on macOS. The app is a workspace member left out of the
+  `default-members`, so that the TV's commands do not build it for ARM.
 - **FFmpeg:** for development, the one from Homebrew or `pkg-config`
   ([build.rs](../crates/core/build.rs)). For distribution, an LGPL build per
   platform, given with `MANA_FFMPEG`, with the components of the
@@ -223,10 +230,11 @@ The desktop app will be distributed for macOS, Windows and possibly Linux:
 Constraints found in the trial with Rune:
 
 - frames enter `NativeSurface` as bytes; on macOS also as IOSurface;
-- while a source plays, the window asks for the next frame on every update.
-  If it waits for the wake-up of each send, every frame arrives one update
-  late: on a 60 Hz screen, 400 out of 500 frames of a 50 fps clip were drawn
-  ([anomalyco/rune#1141](https://github.com/anomalyco/rune/issues/1141));
+- each frame sent wakes the window: up to the revision before
+  [anomalyco/rune#1141](https://github.com/anomalyco/rune/issues/1141)'s fix,
+  on a 60 Hz screen a fifth of a 50 fps clip's frames were never drawn and
+  the window had to ask for a frame on every update; with the fix, 400 out of
+  400 are drawn without asking, at a median of 19.6 ms apart;
 - the channel list declares the version of its rows
   (`virtual_rows_version`), so the layout does not ask for the key of each row
   on every commit;

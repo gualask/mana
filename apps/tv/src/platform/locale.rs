@@ -29,7 +29,7 @@ impl Reading {
         #[cfg(webos)]
         drop(std::thread::Builder::new().name("locale".into()).spawn(move || drop(sender.send(read()))));
         #[cfg(not(webos))]
-        drop(sender.send(environment()));
+        drop(sender.send(mana_core::language::Language::environment_locale()));
         Self { answer, deadline }
     }
 
@@ -66,14 +66,6 @@ fn shortened(reply: &str) -> String {
     reply.chars().take(120).collect()
 }
 
-/// The locale of the environment, as the C library reads it.
-#[cfg(not(webos))]
-fn environment() -> Result<String, String> {
-    ["LC_ALL", "LC_MESSAGES", "LANG"]
-        .into_iter()
-        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
-        .ok_or_else(|| "LC_ALL, LC_MESSAGES and LANG not set".into())
-}
 
 /// Asks the settings service and waits for its reply; `Reading` gives up
 /// at LIMIT, and a reply that never comes leaves this thread waiting.

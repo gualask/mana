@@ -23,7 +23,7 @@ use crate::playback::{BackendError, OpenBackend, Settings};
 use crate::source::Selection;
 pub use crate::live::Quality;
 pub use crate::live::playable::EXTENSION as STREAM_EXTENSION;
-pub use candidates::Candidates;
+pub use candidates::{Candidates, chosen_at_once};
 pub use stats::{Failure, State, Stats};
 use stats::Shared;
 

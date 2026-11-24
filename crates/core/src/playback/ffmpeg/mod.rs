@@ -2,6 +2,9 @@
 //! chooses: on the TV the build bundled with the app (tools/webos/ffmpeg.py),
 //! on the desktop the one `MANA_FFMPEG` names.
 
+#[cfg(feature = "decoder")]
+pub mod decoder;
+
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::Read as _;
 use std::path::Path;

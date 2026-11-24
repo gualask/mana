@@ -14,7 +14,7 @@ use super::hits::{Hits, Target};
 use super::text::Text;
 use super::App;
 use super::{ERROR, FOCUS, MUTED, ROW, TEXT};
-use crate::platform::clock;
+use mana_core::clock;
 use crate::platform::keys::Action;
 
 /// The keys that type, in the keyboard's order; then space and delete.

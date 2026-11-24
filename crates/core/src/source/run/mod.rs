@@ -47,6 +47,15 @@ pub struct Candidate {
     pub fields: BTreeMap<String, String>,
 }
 
+impl Candidate {
+    /// How the candidate at `index` of its item's reads: its label, else its
+    /// id, else its number.
+    pub fn label(&self, index: usize) -> String {
+        let field = |key: &str| self.fields.get(key).filter(|v| !v.is_empty()).cloned();
+        field("label").or_else(|| field("id")).unwrap_or_else(|| format!("{}", index + 1))
+    }
+}
+
 /// The media to play, at the end of a resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resolved {

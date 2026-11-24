@@ -1,4 +1,4 @@
-/* The TV's local time, which Rust's standard library does not give: the
+/* The local time, which Rust's standard library does not give: the
  * offset from UTC that localtime_r applies, as the system's time zone
  * says (on the TV, /etc/localtime). time_t is 32 bits on the TV's glibc
  * 2.28, so the conversion stays in C. */

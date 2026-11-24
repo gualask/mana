@@ -41,6 +41,15 @@ impl Language {
         if language.eq_ignore_ascii_case(Self::Italian.tag()) { Self::Italian } else { Self::English }
     }
 
+    /// The locale of the environment, as the C library reads it: `LC_ALL`,
+    /// `LC_MESSAGES`, then `LANG`, the first one set.
+    pub fn environment_locale() -> Result<String, String> {
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+            .ok_or_else(|| "LC_ALL, LC_MESSAGES and LANG not set".into())
+    }
+
     /// The BCP 47 tag, for an HTML page and for the catalog's plural rules.
     pub fn tag(self) -> &'static str {
         match self {

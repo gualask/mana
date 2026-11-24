@@ -230,3 +230,9 @@ phone-done = Done: you can close this page.
 phone-settings-closed = Settings closed on the TV.
 phone-still-downloading = The TV is still downloading the list: look at the TV.
 phone-closed-meanwhile = Settings closed on the TV: look at the TV for the outcome.
+
+## Desktop
+
+desktop-list-not-set = No list: start Mana with --list and the list's address
+desktop-hint = ↑ ↓ row · ← → page · Enter chooses · Esc back
+desktop-folder = folder
