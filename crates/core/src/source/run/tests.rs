@@ -364,3 +364,18 @@ fn values_convert_as_the_contract_says() {
     assert_eq!(got["c"], "%3D23");
     assert_eq!(got["d"], "2026-11-23T12:30:00Z");
 }
+
+#[test]
+fn an_entry_of_another_shape_is_left_out_unless_all_are() {
+    let source = small(
+        "[[catalogue.steps]]\nid = \"page\"\nop = \"http\"\nurl = \"http://a.example/list\"\n\
+         [[catalogue.steps]]\nid = \"events\"\nop = \"list.map\"\nlist = \"{page.json}\"\nitem = { id = \"{item.id}\", title = \"{item.teams.0}\" }\n\
+         [[resolve.steps]]\nid = \"s\"\nop = \"stream\"\nurl = \"http://a.example/x.m3u8\"\n",
+    );
+    let web = Web::new(vec![("http://a.example/list".into(), body(r#"[{"id":"a","teams":["A"]},{"id":"b"},{"id":"c","teams":["C"]}]"#))]);
+    let events = web.engine(&source).catalogue().unwrap();
+    assert_eq!(events.iter().map(|e| e.fields["title"].as_str()).collect::<Vec<_>>(), ["A", "C"]);
+    let web = Web::new(vec![("http://a.example/list".into(), body(r#"[{"id":"b"},{"id":"d"}]"#))]);
+    let failure = web.engine(&source).catalogue().unwrap_err();
+    assert_eq!((failure.outcome, failure.at.as_str()), (Outcome::SourceChanged, "catalogue.events"));
+}

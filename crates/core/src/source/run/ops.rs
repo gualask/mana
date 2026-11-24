@@ -13,8 +13,9 @@ mod formats;
 use formats::{html_attributes, m3u, nextflight, protobuf};
 
 use super::value::{Scope, Value};
-use super::{Engine, Failure, MAX_ENTRIES, Request, Resolved};
-use crate::source::{Alphabet, Field, Mapping, Method, Operation};
+use super::{Engine, Failure, MAX_ENTRIES, Outcome, Request, Resolved};
+use crate::log::debug;
+use crate::source::{Alphabet, Field, Mapping, Method, Operation, Template};
 
 /// The value `operation` gives, at `at`.
 pub(super) fn run(
@@ -42,27 +43,7 @@ pub(super) fn run(
             let answer = engine.send(at, Request { method, url, headers, body })?;
             Ok(Value::Response(Rc::new(answer)))
         }
-        Operation::ListMap { list, map, filter, present } => {
-            let entries = scope.fill(list).and_then(|v| v.list()).map_err(changed)?;
-            if entries.len() > MAX_ENTRIES {
-                return Err(Failure::limit(at, format!("a list of {} entries, at most {MAX_ENTRIES}", entries.len())));
-            }
-            let mut mapped = Vec::new();
-            for entry in &entries {
-                let scope = Scope { inputs, steps, entry: Some(entry) };
-                if !keep(entry, filter, &scope).map_err(changed)? || !present.iter().all(|field| has(entry, field)) {
-                    continue;
-                }
-                mapped.push(match map {
-                    Mapping::Fields(fields) => Value::Record(record(fields, &scope).map_err(changed)?),
-                    Mapping::Call { recipe, input } => {
-                        let given = input.iter().map(|(k, t)| Ok((k.clone(), scope.fill(t)?))).collect::<Result<_, String>>();
-                        engine.call(at, recipe, given.map_err(changed)?)?
-                    }
-                });
-            }
-            Ok(Value::List(mapped))
-        }
+        Operation::ListMap { list, map, filter, present } => list_map(engine, at, &scope, list, map, (filter, present)),
         Operation::Call { recipe, input } => {
             let given = input.iter().map(|(k, t)| Ok((k.clone(), scope.fill(t)?))).collect::<Result<_, String>>();
             engine.call(at, recipe, given.map_err(changed)?)
@@ -75,6 +56,62 @@ pub(super) fn run(
         }
         other => pure(other, &scope).map_err(changed),
     }
+}
+
+/// `list.map`: each entry of `list` that passes `filter` and has the
+/// fields `present`, mapped; an entry of another shape left out.
+fn list_map(
+    engine: &mut Engine,
+    at: &str,
+    scope: &Scope,
+    list: &Template,
+    map: &Mapping,
+    (filter, present): (&BTreeMap<String, Template>, &[String]),
+) -> Result<Value, Failure> {
+    let changed = |detail: String| Failure::changed(at, detail);
+    let entries = scope.fill(list).and_then(|v| v.list()).map_err(changed)?;
+    if entries.len() > MAX_ENTRIES {
+        return Err(Failure::limit(at, format!("a list of {} entries, at most {MAX_ENTRIES}", entries.len())));
+    }
+    let (mut mapped, mut skipped) = (Vec::new(), Vec::new());
+    for entry in &entries {
+        let scope = Scope { inputs: scope.inputs, steps: scope.steps, entry: Some(entry) };
+        if !keep(entry, filter, &scope).map_err(changed)? || !present.iter().all(|field| has(entry, field)) {
+            continue;
+        }
+        match map_entry(engine, at, map, &scope) {
+            Ok(value) => mapped.push(value),
+            // An entry of another shape is left out, as an M3U reader leaves out a
+            // broken line: one odd event must not take the catalogue with it.
+            Err(failure) if failure.outcome == Outcome::SourceChanged => skipped.push(failure),
+            Err(failure) => return Err(failure),
+        }
+    }
+    mapped_unless_all_left_out(at, mapped, &skipped)
+}
+
+/// What `list.map` makes of the entry `scope` holds: its `item`, or what
+/// its recipe gives.
+fn map_entry(engine: &mut Engine, at: &str, map: &Mapping, scope: &Scope) -> Result<Value, Failure> {
+    let changed = |detail: String| Failure::changed(at, detail);
+    match map {
+        Mapping::Fields(fields) => record(fields, scope).map(Value::Record).map_err(changed),
+        Mapping::Call { recipe, input } => {
+            let given = input.iter().map(|(k, t)| Ok((k.clone(), scope.fill(t)?))).collect::<Result<_, String>>();
+            given.map_err(changed).and_then(|given| engine.call(at, recipe, given))
+        }
+    }
+}
+
+/// The entries `list.map` made, when it made any or left none out; else
+/// why the first one was left out.
+fn mapped_unless_all_left_out(at: &str, mapped: Vec<Value>, skipped: &[Failure]) -> Result<Value, Failure> {
+    let Some(first) = skipped.first() else { return Ok(Value::List(mapped)) };
+    if mapped.is_empty() {
+        return Err(first.clone());
+    }
+    debug!("{at}: {} of {} entries left out, the first: {first}", skipped.len(), skipped.len() + mapped.len());
+    Ok(Value::List(mapped))
 }
 
 /// The operations that only transform values.
@@ -185,7 +222,7 @@ fn texts(found: Vec<String>) -> Value {
 }
 
 /// Whether `entry`'s fields equal those `filter` gives.
-fn keep(entry: &Value, filter: &BTreeMap<String, crate::source::Template>, scope: &Scope) -> Result<bool, String> {
+fn keep(entry: &Value, filter: &BTreeMap<String, Template>, scope: &Scope) -> Result<bool, String> {
     for (field, template) in filter {
         let Ok(value) = entry.get(field) else { return Ok(false) };
         if value.text().ok() != Some(scope.text(template)?) {
