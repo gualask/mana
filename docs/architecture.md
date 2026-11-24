@@ -197,9 +197,8 @@ the HLS client and the player and changed in both across eight commits, lives
 only in `session`: `live` and `playback` report and do not decide. The fake
 backend of `playback` runs feeder, timeline and reopening in `cargo test`
 on the Mac. `source` is apart from `live`: "source" there meant the stream
-to play, and the contract needs none of the HLS client. The engine, the CLI
-and the contract tests on the runtime follow ([Next steps and open
-questions](todo.md)).
+to play, and the contract needs none of the HLS client. The contract tests
+on the runtime follow ([Next steps and open questions](todo.md)).
 
 ### Desktop client
 

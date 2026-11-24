@@ -3,8 +3,6 @@
 ## Next steps
 
 - [x] Define the executable stream contract and update schema and examples together — done when catalogue, detail and resolution have typed inputs/outputs and validatable references, with no versions; unknown capabilities, missing references and cycles are rejected ([Configuration and extensions](configuration.md#source-files)).
-- [ ] Add the local CLI on the core — done when a direct URL and the synthetic JSON catalogue go through the same application models and reach local decoding; the core and the apps do not import the lab ([Modular architecture](architecture.md#target-structure)).
-- [ ] Implement TOML loading and JSON import into the same plan — done when equivalent profiles produce the same plan, errors point to the file and field, and an invalid update keeps the last valid profile ([pipeline](configuration.md#profiles-state-and-versions)).
 - [x] Run HTTP/JSON recipes and composable resolvers — done when nested detail, dispatch and resolver chains work with finite budgets and without provider logic in the UI ([resolution](architecture.md#step-by-step-resolution)).
 - [x] Connect the resolvers of the encrypted and binary fixtures through the registry — done when the runtime resolves both cases and rejects tampered wrappers or wrong sessions ([scenarios](local-lab.md#three-origins-and-available-scenarios)).
 - [ ] Connect the e2e tests to the runtime and the application session — done when the player performs fallback, renewal after expiry and cancellation on channel change, discarding late results; the suite also verifies empty events and denials ([e2e](local-lab.md#moving-to-player-e2e-tests)).
