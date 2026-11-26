@@ -22,6 +22,8 @@ Full copies of documents that cannot be redistributed are in
   Magic Remote pointer.
 - [Performance](performance.md): compositor and redraw, feeding data to
   Starfish, TLS and AES decryption on 32-bit ARM, memory of the process.
+- [Starfish](starfish.md): presented position against an estimated clock,
+  HDR10, HLG and Dolby Vision declared to the pipeline.
 
 ## Platform and format documentation
 
