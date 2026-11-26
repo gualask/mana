@@ -108,12 +108,14 @@ with the one in use marked, to choose another
 
 Mana does not pass to another candidate by itself: one that does not
 resolve, or whose stream cannot be opened or plays no more, ends playback,
-and the menu opens again with that candidate marked and the reason. Its
+and the menu opens again with that candidate marked and the reason, while
+the source is asked again for the signals, which replace those shown when
+they come. Its
 stream gives up after 3 network failures a second apart, as Media3 gives up
 a playlist, or 10 s after its first attempt, the time to first byte hls.js
 allows a manifest, so that a host that is unreachable or never answers
 does not hold the screen; a channel
 with a URL, or a source's only candidate, is tried until the network is
-back. A token refused while watching has the same candidate resolved
-again, within the budget of reopenings
-([reopen.rs](../crates/core/src/session/reopen.rs)).
+back. A refused stream has the same candidate resolved again, the event's
+signals read again first, within the budget of reopenings
+([HLS live edge cases](hls-cases.md#errors-and-fallback)).

@@ -2,6 +2,7 @@
 //! again whenever an opening is interrupted, as a TV tunes in again.
 
 mod policy;
+mod renewal;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +11,8 @@ use std::time::Duration;
 
 use policy::{Budget, Next, charge, next};
 pub use policy::MAX_REOPENINGS;
+pub(super) use renewal::PAUSES;
+use renewal::Renewal;
 
 use super::Program;
 use super::stats::{Failure, Shared};
@@ -24,7 +27,7 @@ use crate::playback::reader::Reader;
 use crate::net::{self, Client};
 use crate::playback::{self, OpenBackend, Settings};
 use crate::source::Selection;
-use crate::source::run::{Candidate, Engine, MAX_ANSWER_BYTES, Outcome, Request, Resolved};
+use crate::source::run::{self, Candidate, Engine, MAX_ANSWER_BYTES, Outcome, Request, Resolved};
 
 /// How long opening a candidate the viewer chose among several insists
 /// before playback ends, so that they can choose another: an unreachable
@@ -58,7 +61,7 @@ pub(super) fn run(
         Program::Path(path) => return Ok(play_file(path, settings, open, stop, &shared.playback)?),
     };
     log!("live {}", playable.describe());
-    play_stream(playable.clone(), &mut || Ok(playable.clone()), None, settings, open, stop, shared, quality)
+    play_stream(playable.clone(), &mut Renewal::again(), None, settings, open, stop, shared, quality)
 }
 
 /// Plays an item of a source: the candidate the viewer chose, else the
@@ -78,22 +81,26 @@ fn play_source(
     let mut engine = engine(selection, &client, stop);
     let candidate = match &selection.candidate {
         Some(candidate) => candidate.clone(),
-        None => match engine.sources(item) {
-            Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
-            Err(failure) => return Err(Failure::Source(failure)),
-            Ok(candidates) => candidates.into_iter().next().expect("sources gives at least one candidate"),
-        },
+        None => {
+            let Some(found) = unless_cancelled(engine.sources(item))? else { return Ok(()) };
+            found.into_iter().next().expect("sources gives at least one candidate")
+        }
     };
-    let id = candidate.fields.get("id").map_or("", String::as_str);
-    let resolved = match engine.resolve(&candidate, item) {
-        Err(failure) if failure.outcome == Outcome::Cancelled => return Ok(()),
-        other => other.map_err(Failure::Source)?,
-    };
-    log!("candidate {id} resolved: {}", net::loggable(&resolved.url));
+    let Some(resolved) = unless_cancelled(engine.resolve(&candidate, item))? else { return Ok(()) };
+    log!("candidate {} resolved: {}", candidate.id().unwrap_or(""), net::loggable(&resolved.url));
     // A candidate chosen among several gives way to the viewer's choice.
     let patience = selection.candidate.is_some().then_some(CANDIDATE_PATIENCE);
-    let mut renew = || renewed(&mut engine, &candidate, item);
-    play_stream(playable(resolved), &mut renew, patience, settings, open, stop, shared, quality)
+    let reread = source.sources.is_some();
+    let mut renew = || renewed(&mut engine, &candidate, item, reread);
+    play_stream(playable(resolved), &mut Renewal::resolve(&mut renew), patience, settings, open, stop, shared, quality)
+}
+
+/// What a run of the engine gave, None when the viewing stopped meanwhile.
+fn unless_cancelled<T>(result: Result<T, run::Failure>) -> Result<Option<T>, Failure> {
+    match result {
+        Err(failure) if failure.outcome == Outcome::Cancelled => Ok(None),
+        other => other.map(Some).map_err(Failure::Source),
+    }
 }
 
 /// An engine for `selection`'s source, on `client`, given up once `stop`.
@@ -102,11 +109,28 @@ pub(super) fn engine<'a>(selection: &'a Selection, client: &'a Client, stop: &'a
     Engine::new(&selection.source, &selection.device, fetch, || stop.load(Ordering::Relaxed))
 }
 
-/// `candidate` resolved again, its token having been refused.
-fn renewed(engine: &mut Engine, candidate: &Candidate, item: &crate::source::Item) -> Result<Playable, Failure> {
+/// `candidate` resolved again, its stream having been refused: as the
+/// source gives it now, its item's candidates read again first when the
+/// source has them (`reread`), since an event's signals may change, and a
+/// signal whose stream the resolution only takes from them would otherwise
+/// come back the same.
+fn renewed(engine: &mut Engine, candidate: &Candidate, item: &crate::source::Item, reread: bool) -> Result<Playable, Failure> {
+    let current;
+    let candidate = if reread {
+        current = still_offered(engine.sources(item).map_err(Failure::Source)?, candidate)?;
+        &current
+    } else {
+        candidate
+    };
     let resolved = engine.resolve(candidate, item).map_err(Failure::Source)?;
     log!("stream resolved again: {}", net::loggable(&resolved.url));
     Ok(playable(resolved))
+}
+
+/// `candidate` as `found`, the item's candidates read again, has it: the
+/// item no longer offering it ends playback, and the viewer chooses again.
+fn still_offered(found: Vec<Candidate>, candidate: &Candidate) -> Result<Candidate, Failure> {
+    found.into_iter().find(|c| c.id() == candidate.id()).ok_or(Failure::Withdrawn)
 }
 
 fn playable(resolved: Resolved) -> Playable {
@@ -114,11 +138,11 @@ fn playable(resolved: Resolved) -> Playable {
 }
 
 /// Opens the live `playable` again and again, as `charge` allows, until it
-/// ends or the viewing stops; `renew` gives it anew when its token is
-/// refused; each opening gives up within `patience`, if given.
+/// ends or the viewing stops; `renewal` gives it anew when it is refused;
+/// each opening gives up within `patience`, if given.
 fn play_stream(
     playable: Playable,
-    renew: &mut dyn FnMut() -> Result<Playable, Failure>,
+    renewal: &mut Renewal,
     patience: Option<Patience>,
     settings: &Settings,
     open: &OpenBackend,
@@ -128,34 +152,44 @@ fn play_stream(
 ) -> Result<(), Failure> {
     let mut budget = Budget::default();
     let mut playable = playable;
-    let mut live = resolve(&mut playable, renew, patience, stop, shared, quality, &mut budget)?;
+    let mut live = resolve(&mut playable, renewal, patience, stop, shared, quality, &mut budget)?;
     while let Some(opened) = &live {
-        let stream_stop = hls::Stop::new(stop);
-        let ended = play_live(opened, &stream_stop, open, settings, stop, &shared.playback);
-        // The downloaders of this opening end with it, also when it failed
-        // to open.
-        stream_stop.set();
+        let before = presented(shared);
+        let outcome = play_opening(opened, open, settings, stop, shared);
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-        match charge(next(stream_stop.interruption(), ended), &mut budget) {
-            Next::End(result) => return result,
-            Next::Reopen(_) => {}
-            Next::Resolve(_) => {
-                playable = renew()?;
-                live = resolve(&mut playable, renew, patience, stop, shared, quality, &mut budget)?;
-            }
+        if presented(shared) != before {
+            renewal.played();
         }
+        let cause = match charge(outcome, &mut budget) {
+            Next::End(result) => return result,
+            Next::Reopen(_) => continue,
+            Next::Resolve(cause) => cause,
+        };
+        let Some(renewed) = renewal.renew(&playable, cause, &mut budget, stop)? else { return Ok(()) };
+        playable = renewed;
+        live = resolve(&mut playable, renewal, patience, stop, shared, quality, &mut budget)?;
     }
     Ok(())
 }
 
-/// Tells what `playable` serves: None once stopped meanwhile. A refused
-/// token, as when the URL expired already, has it given anew by `renew`,
-/// within the budget.
+/// Plays one opening of a live stream until it ends, and tells what to do
+/// next.
+fn play_opening(opened: &Live, open: &OpenBackend, settings: &Settings, stop: &Arc<AtomicBool>, shared: &Shared) -> Next {
+    let stream_stop = hls::Stop::new(stop);
+    let ended = play_live(opened, &stream_stop, open, settings, stop, &shared.playback);
+    // The downloaders of this opening end with it, also when it failed to
+    // open.
+    stream_stop.set();
+    next(stream_stop.interruption(), ended)
+}
+
+/// Tells what `playable` serves: None once stopped meanwhile. A refusal,
+/// as when its token expired already, has it given anew by `renewal`.
 fn resolve(
     playable: &mut Playable,
-    renew: &mut dyn FnMut() -> Result<Playable, Failure>,
+    renewal: &mut Renewal,
     patience: Option<Patience>,
     stop: &Arc<AtomicBool>,
     shared: &Shared,
@@ -168,11 +202,14 @@ fn resolve(
             Err(Interruption::Refused(cause)) => cause,
             Err(other) => return Err(Failure::Live(other)),
         };
-        if let Next::End(result) = charge(Next::Resolve(cause), budget) {
-            return result.map(|()| None);
-        }
-        *playable = renew()?;
+        let Some(renewed) = renewal.renew(playable, cause, budget, stop)? else { return Ok(None) };
+        *playable = renewed;
     }
+}
+
+/// Where the decoder has presented, to tell whether an opening played.
+fn presented(shared: &Shared) -> Option<i64> {
+    shared.playback.lock().unwrap().presented_ms
 }
 
 /// Plays a local file to its end, again and again when the settings loop it.

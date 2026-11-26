@@ -265,8 +265,10 @@ numbering restarted lower), and when the pipeline fails, for example shows
 no frames for 15 s. Reopening reuses the variant playlists already read: on
 RaiPlay the master's token expires after 150 s, that of the playlists and
 segments after 24 h. If a playlist or a segment answers 401, 403 or 410
-(expired token), a channel with a source is instead resolved again. Pipeline failures and
-new resolutions are allowed at most 6 times in 5 minutes, then playback
+(expired token), a channel with a source is instead resolved again, and one
+with a URL tried again a few times
+([HLS live edge cases](hls-cases.md#errors-and-fallback)). Pipeline failures
+and new resolutions are allowed at most 6 times in 5 minutes, then playback
 closes with the error.
 
 During playback the up and down arrows show and hide the information panel,

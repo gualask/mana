@@ -1,7 +1,8 @@
 //! The signals menu: the candidates of a channel or event whose source
 //! gives several, which the viewer chooses among with the remote. Mana
 //! does not pass to another by itself: when the one chosen fails, the menu
-//! opens again with the reason.
+//! opens again with the reason, and asks the source again, as the signals
+//! may have changed.
 
 use std::collections::BTreeMap;
 
@@ -32,6 +33,8 @@ pub struct SignalsMenu {
     in_use: Option<String>,
     /// Why candidates chosen before failed, by id.
     failed: BTreeMap<String, Failure>,
+    /// The source asked again, the signals found still shown meanwhile.
+    again: Option<Candidates>,
 }
 
 enum Signals {
@@ -45,11 +48,14 @@ impl SignalsMenu {
     /// Asks the source of `selection` for its item's candidates.
     pub fn ask(name: String, selection: Selection) -> Self {
         let signals = Signals::Asking(Candidates::ask(&selection));
-        Self { name, selection, signals, focus: 0, in_use: None, failed: BTreeMap::new() }
+        Self { name, selection, signals, focus: 0, in_use: None, failed: BTreeMap::new(), again: None }
     }
 
-    /// Takes the source's answer, once it came; true when it just did.
+    /// Takes the source's first answer, once it came, true when it just
+    /// did; or the answer asked again, which replaces the signals shown
+    /// unless it failed.
     pub fn refresh(&mut self) -> bool {
+        self.take_again();
         let Signals::Asking(asking) = &self.signals else { return false };
         let Some(answer) = asking.poll() else { return false };
         self.signals = match answer {
@@ -57,6 +63,24 @@ impl SignalsMenu {
             Err(failure) => Signals::None(failure),
         };
         true
+    }
+
+    /// Asks the source again for the signals, once some were found.
+    pub fn ask_again(&mut self) {
+        if matches!(self.signals, Signals::Found(_)) {
+            self.again = Some(Candidates::ask(&self.selection));
+        }
+    }
+
+    /// The signals asked again, once they came, the focus kept on the same
+    /// one if still offered.
+    fn take_again(&mut self) {
+        let Some(answer) = self.again.as_ref().and_then(Candidates::poll) else { return };
+        self.again = None;
+        let Ok(found) = answer else { return };
+        let focused = self.candidates().get(self.focus).and_then(Candidate::id).map(str::to_string);
+        self.focus = focused.and_then(|id| found.iter().position(|c| c.id() == Some(&id))).unwrap_or(0);
+        self.signals = Signals::Found(found);
     }
 
     pub fn asking(&self) -> bool {
@@ -86,7 +110,7 @@ impl SignalsMenu {
     /// menu marks as in use from now on.
     pub fn choose(&mut self, index: usize) -> Option<Selection> {
         let candidate = self.candidates().get(index)?.clone();
-        self.in_use = candidate.fields.get("id").cloned();
+        self.in_use = candidate.id().map(str::to_string);
         self.focus = index;
         Some(Selection { candidate: Some(candidate), ..self.selection.clone() })
     }
@@ -143,8 +167,8 @@ impl SignalsMenu {
             }
             let colour = if i == self.focus { TEXT } else { MUTED };
             let width = t.draw(r, x + 36.0 * s, top + 12.0 * s, 32.0 * s, TEXT, &candidate.label(i));
-            let id = candidate.fields.get("id");
-            let mark = if id.is_some() && id == self.in_use.as_ref() {
+            let id = candidate.id();
+            let mark = if id.is_some() && id == self.in_use.as_deref() {
                 Some(text!(language, "signals-in-use"))
             } else {
                 id.filter(|id| self.failed.contains_key(*id)).map(|_| text!(language, "signals-failed"))
@@ -153,7 +177,7 @@ impl SignalsMenu {
                 t.draw(r, x + 56.0 * s + width, top + 16.0 * s, 26.0 * s, colour, &mark);
             }
         }
-        let focused = candidates.get(self.focus).and_then(|c| c.fields.get("id")).and_then(|id| self.failed.get(id));
+        let focused = candidates.get(self.focus).and_then(Candidate::id).and_then(|id| self.failed.get(id));
         if let Some(failure) = focused {
             let top = y + 110.0 * s + shown as f32 * row;
             t.draw(r, x + 36.0 * s, top, 24.0 * s, MUTED, &failure.text(language));
@@ -187,6 +211,7 @@ impl App {
             && let Some(Stats { state: State::Failed(failure), .. }) = self.session.stats()
         {
             menu.failed(failure);
+            menu.ask_again();
             self.signals_open = true;
         }
     }
@@ -210,7 +235,15 @@ mod tests {
         let source = Arc::new(Source::from_toml(text).unwrap());
         let selection = Selection { source, item: Item { fields: BTreeMap::new() }, device: String::new(), candidate: None };
         let found = vec![candidate(&[("id", "a"), ("label", "Main")]), candidate(&[("id", "b")]), candidate(&[("label", "")])];
-        SignalsMenu { name: "Event".into(), selection, signals: Signals::Found(found), focus: 0, in_use: None, failed: BTreeMap::new() }
+        SignalsMenu {
+            name: "Event".into(),
+            selection,
+            signals: Signals::Found(found),
+            focus: 0,
+            in_use: None,
+            failed: BTreeMap::new(),
+            again: None,
+        }
     }
 
     #[test]

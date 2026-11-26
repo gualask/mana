@@ -90,7 +90,7 @@ Abbreviations: **H** = hls.js `src/`, **M** = Media3
 
 | Case | hls.js / Media3 | Our status |
 |---|---|---|
-| 403 or expired token | M `DefaultLoadErrorHandlingPolicy.isEligibleForFallback` (temporary exclusion); neither renews tokens | Handled: 401, 403 and 410 make the source resolve again, at most 6 times in 5 minutes, also on the first playlist or on the recipe at open; then viewing ends with the HTTP status |
+| 403 or expired token | H `retryForHttpStatus` never retries a 4xx; M `DefaultLoadErrorHandlingPolicy.isEligibleForFallback` excludes the track for 60 s, else retries the same URL 3 times at most 5 s apart; F gives up; none renews tokens. Nuvio, asking its addons again before playback, drops a URL equal to the failed one | Handled, also on the first playlist or on the recipe at open ([renewal.rs](../crates/core/src/session/reopen/renewal.rs)): on 401, 403 and 410 a stream of the list, which cannot change, is tried again after 1, 3 and 5 s (a server may still count the connection of the channel just left); one of a source is resolved again, at most 6 times in 5 minutes, an event's signals read again first since its stream may come from them. The very stream just refused, given again, is tried once more (a server may authorize the device when asked), then viewing ends; a stream that played starts a new series. Viewing ends with the HTTP status |
 | Redundant variants, content steering | M `HlsRedundantGroup`, `excludePlaylist`; H `error-controller.ts` | To add, medium (steering low) |
 
 ## Metadata and low latency

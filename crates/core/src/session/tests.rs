@@ -173,7 +173,7 @@ fn backends_open_in_turn_and_a_viewing_stopped_meanwhile_opens_none() {
 const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmedia.m3u8\n";
 
 #[test]
-fn a_refused_token_is_resolved_again_within_the_budget() {
+fn a_stream_of_the_list_refused_is_tried_again_a_few_times() {
     let (address, asked) = serve(|path| match path {
         "/master.m3u8" => (200, MASTER.into()),
         _ => (403, Vec::new()),
@@ -182,9 +182,9 @@ fn a_refused_token_is_resolved_again_within_the_budget() {
     let mut session = Session::new(open);
     session.play("refused".into(), stream_file("refused", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     let state = ended(&session);
-    assert!(state.contains(&format!("source refused even after {} new resolutions", reopen::MAX_REOPENINGS)), "{state}");
+    assert!(state.contains(&format!("stream refused, also on {} more attempts", reopen::PAUSES.len())), "{state}");
     let masters = asked.lock().unwrap().iter().filter(|a| a.path == "/master.m3u8").count();
-    assert_eq!(masters, 1 + reopen::MAX_REOPENINGS);
+    assert_eq!(masters, 1 + reopen::PAUSES.len());
     session.stop();
     assert!(!session.is_playing());
 }
@@ -210,8 +210,8 @@ fn a_direct_url_refused_at_the_opening_ends_with_its_status() {
     session.play("denied".into(), stream_file("denied", &format!("{address}/master.m3u8")), Settings::default()).unwrap();
     let state = ended(&session);
     assert!(state.contains("HTTP 403 for /master.m3u8"), "{state}");
-    assert!(state.contains(&format!("even after {} new resolutions", reopen::MAX_REOPENINGS)), "{state}");
-    assert_eq!(asked.lock().unwrap().len(), 1 + reopen::MAX_REOPENINGS);
+    assert!(state.contains(&format!("also on {} more attempts", reopen::PAUSES.len())), "{state}");
+    assert_eq!(asked.lock().unwrap().len(), 1 + reopen::PAUSES.len());
 }
 
 #[test]
@@ -470,8 +470,46 @@ fn a_refused_token_has_the_source_resolve_the_candidate_again() {
     let mut session = Session::new(open);
     session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
     assert_eq!(ended(&session), "Error: the stream has no video");
+    // The event's signals are read again before the new resolution.
     let paths: Vec<String> = asked.lock().unwrap().iter().map(|a| a.path.clone()).collect();
-    assert_eq!(paths[..5], ["/event.json", "/link/one", "/master.m3u8?t=0", "/link/one", "/master.m3u8?t=1"]);
+    assert_eq!(paths[..6], ["/event.json", "/link/one", "/master.m3u8?t=0", "/event.json", "/link/one", "/master.m3u8?t=1"]);
+}
+
+#[test]
+fn a_source_giving_the_stream_just_refused_has_it_tried_once_more() {
+    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let (address, asked) = serve(|path| match path {
+        "/event.json" => (200, br#"["one"]"#.to_vec()),
+        "/link/one" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        _ => (403, Vec::new()),
+    });
+    ADDRESS.set(address.clone()).unwrap();
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
+    let state = ended(&session);
+    assert!(state.contains("the source gives again the stream just refused: HTTP 403 for /master.m3u8"), "{state}");
+    let resolution = ["/event.json", "/link/one"];
+    let expected: Vec<&str> = [&resolution[..], &["/master.m3u8"], &resolution, &["/master.m3u8"], &resolution].concat();
+    assert_eq!(paths(&asked), expected);
+}
+
+#[test]
+fn a_signal_the_event_no_longer_offers_ends_playback() {
+    static ADDRESS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let (address, _) = serve(|path| match path {
+        "/event.json" if READ.fetch_add(1, Ordering::Relaxed) == 0 => (200, br#"["one"]"#.to_vec()),
+        "/event.json" => (200, br#"["two"]"#.to_vec()),
+        "/link/one" => (200, format!("{}/master.m3u8", ADDRESS.get().unwrap()).into_bytes()),
+        _ => (403, Vec::new()),
+    });
+    ADDRESS.set(address.clone()).unwrap();
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.play("Event".into(), source_item(SIGNALS, &address, &[("id", "e1")]), Settings::default()).unwrap();
+    let state = ended(&session);
+    assert_eq!(state, "Error: the stream is no longer among those the source offers");
 }
 
 #[test]

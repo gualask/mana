@@ -103,7 +103,7 @@ The split of the recipes and a synthetic example are described in the
 
 | Module | Owns | Change it isolates |
 |---|---|---|
-| `session` | The current viewing, one at a time; the candidates of a source's item, resolved and tried in order; reopening and new resolution with their limit; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
+| `session` | The current viewing, one at a time; the candidates of a source's item, asked for on a thread of their own, and the one the viewer chose, or the item's only one, resolved and played; reopening, and giving a refused stream anew, with their limits; the viewing state (`State`) and what the screens show of it, merged for the clients | Viewing rules shared between clients |
 | `live` | The stream to play at a known URL (`Playable`: a `.stream` file, a channel's URL, a source's resolution), HLS client; reports interruptions without deciding | Stream protocols and formats |
 | `source` | Source files: their contract, the vocabulary of their steps and the checks before use; the engine that runs them, with its limits and outcomes, the network given by the caller | Providers, written as data |
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |

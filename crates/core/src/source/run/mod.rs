@@ -48,6 +48,12 @@ pub struct Candidate {
 }
 
 impl Candidate {
+    /// Its `id`, which tells it among its item's, also when they are read
+    /// again.
+    pub fn id(&self) -> Option<&str> {
+        self.fields.get("id").map(String::as_str)
+    }
+
     /// How the candidate at `index` of its item's reads: its label, else its
     /// id, else its number.
     pub fn label(&self, index: usize) -> String {

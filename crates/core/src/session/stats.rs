@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::reopen::MAX_REOPENINGS;
+use super::reopen::{MAX_REOPENINGS, PAUSES};
 use crate::source;
 use crate::language::{Language, Localized, display_in_english};
 use crate::live::playable;
@@ -55,6 +55,12 @@ pub enum Failure {
     Playback(playback::Error),
     /// The stream's token was refused after every new resolution allowed.
     RefusedAgain(Cause),
+    /// A stream the list gives, refused again after every pause.
+    RefusedRetried(Cause),
+    /// The source gave once more the stream just refused twice.
+    RefusedSame(Cause),
+    /// The candidate playing, refused, is no longer among its item's.
+    Withdrawn,
     /// The viewing's thread could not start, as the system says.
     Thread(String),
     /// A source gave nothing to play: no candidate, or none that resolved.
@@ -76,6 +82,11 @@ impl Localized for Failure {
             Self::RefusedAgain(cause) => {
                 text!(language, "live-refused-again", count = MAX_REOPENINGS, cause = cause.text(language))
             }
+            Self::RefusedRetried(cause) => {
+                text!(language, "live-refused-retried", count = PAUSES.len(), cause = cause.text(language))
+            }
+            Self::RefusedSame(cause) => text!(language, "live-refused-same", cause = cause.text(language)),
+            Self::Withdrawn => text!(language, "live-withdrawn"),
             Self::Thread(detail) => detail.clone(),
             Self::Source(failure) => failure.text(language),
         }

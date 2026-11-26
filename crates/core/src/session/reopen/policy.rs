@@ -83,12 +83,12 @@ impl Budget {
     }
 }
 
-/// Logs a reopening or a resolution and charges it to `budget` when it
-/// counts: a reopening after an error, or a resolution, in case the new
-/// token is refused too. Past the budget, playback ends instead.
+/// Logs a reopening and charges it to `budget` when it counts, after an
+/// error; past the budget, playback ends instead. A resolution is passed
+/// on: the renewal charges it (renewal.rs).
 pub(super) fn charge(outcome: Next, budget: &mut Budget) -> Next {
     match outcome {
-        Next::End(_) => outcome,
+        Next::End(_) | Next::Resolve(_) => outcome,
         Next::Reopen(Reopening::Failed(error)) => match budget.spend() {
             Some(spent) => {
                 log!("live reopened from the live edge after an error ({spent}/{MAX_REOPENINGS}): {error}");
@@ -100,13 +100,6 @@ pub(super) fn charge(outcome: Next, budget: &mut Budget) -> Next {
             log!("live reopened from the live edge: {reason}");
             outcome
         }
-        Next::Resolve(cause) => match budget.spend() {
-            Some(spent) => {
-                log!("stream to resolve again ({spent}/{MAX_REOPENINGS}): {cause}");
-                Next::Resolve(cause)
-            }
-            None => Next::End(Err(Failure::RefusedAgain(cause))),
-        },
     }
 }
 
@@ -150,11 +143,11 @@ mod tests {
     #[test]
     fn past_the_budget_a_failure_ends_playback() {
         let mut budget = Budget::default();
-        for _ in 0..MAX_REOPENINGS {
-            assert!(matches!(charge(Next::Resolve(refused()), &mut budget), Next::Resolve(_)));
-        }
-        assert_eq!(charge(Next::Resolve(refused()), &mut budget), Next::End(Err(Failure::RefusedAgain(refused()))));
         let error = playback::Error::DecoderWontResume;
+        for _ in 0..MAX_REOPENINGS {
+            assert!(matches!(charge(Next::Reopen(Reopening::Failed(error.clone())), &mut budget), Next::Reopen(_)));
+        }
+        assert_eq!(charge(Next::Resolve(refused()), &mut budget), Next::Resolve(refused()));
         assert_eq!(charge(Next::Reopen(Reopening::Failed(error.clone())), &mut budget), Next::End(Err(error.into())));
         let starved = Next::Reopen(Reopening::Starved(Duration::from_secs(12)));
         assert_eq!(charge(starved, &mut budget), Next::Reopen(Reopening::Starved(Duration::from_secs(12))));
