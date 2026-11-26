@@ -55,8 +55,10 @@ the desktop app, which a plain `cargo test` leaves out so that the TV's
 build commands do not try to build it for ARM. The tests run session and
 playback on a fake backend, and check every
 source of `config/examples/`, and every case of `config/examples/rejected/`
-against the rule it breaks; the 16 lab tests decode with FFmpeg without
-remote services. Examples and tests use only
+against the rule it breaks; the
+[player e2e tests](local-lab.md#player-e2e-tests) start the lab, so
+`cargo test` needs its [requirements](local-lab.md#start-and-playback). The
+16 lab tests decode with FFmpeg without remote services. Examples and tests use only
 loopback and `.invalid` or `.example` domains. For the TV, the package is
 what counts: `tools/webos/package.py` stops if the build does not pass its
 [checks](tv-app.md#package-checks).

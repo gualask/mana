@@ -93,6 +93,9 @@ class State:
         signature = hmac.new(self.signing_key, ('synthetic:' + expires).encode(), hashlib.sha256).hexdigest()
         return urlencode({'expires': expires, 'token': signature})
 
+    def public_url(self):
+        return self.origins['media'] + '/public/master.m3u8'
+
     def media_url(self):
         return self.origins['media'] + '/protected/master.m3u8?' + self.signed_query()
 

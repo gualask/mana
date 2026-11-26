@@ -188,6 +188,11 @@ class LabTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as redirect:
             self.api('/faults/redirect-loop')
         redirect.exception.close()
+        started = time.monotonic()
+        raw, _ = self.api('/faults/slow?seconds=0.3')
+        self.assertGreaterEqual(time.monotonic() - started, .3)
+        self.assertEqual(json.loads(raw), {'url': self.lab.state.public_url()})
+        self.assert_http_error(self.origins['api'] + '/faults/slow?seconds=60', 400, 'invalid_delay')
 
     def test_16_signed_binary_catalogue(self):
         from dev.lab import binary
@@ -343,10 +348,12 @@ class LiveTests(unittest.TestCase):
 
     def test_live_token_expires(self):
         headers = self.lab.state.headers()
+        resolved = self.stats()['resolved']
         request = urllib.request.Request(self.origins['api'] + '/live/resolve.json', headers=headers)
         with self.opener.open(request, timeout=10) as response:
             url = json.loads(response.read())['video']['content_url']
         query = '?' + url.split('?', 1)[1]
+        self.assertEqual(self.stats()['resolved'], resolved + 1)
         self.assertIn('index.m3u8' + query, self.fetch('master.m3u8' + query, headers).decode())
         self.assertIn('#EXTM3U', self.fetch('index.m3u8' + query, headers).decode())
         self.assertNotEqual(self.control('live-token', {})['token'], query[3:])

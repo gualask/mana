@@ -17,6 +17,8 @@ from .profiles import write_config
 from .tls import server_context
 
 
+# Every live channel the lab can serve, by name.
+LIVE_CHANNELS = (*CHANNELS, *PACKAGED_CHANNELS)
 # A client that stalls in the TLS handshake must only hold its own thread.
 HANDSHAKE_TIMEOUT = 10
 
@@ -72,27 +74,33 @@ class Handler(BaseHTTPRequestHandler):
         self.respond()
 
     def respond(self):
+        response = self.answer()
+        if response is None:
+            self.close_connection = True  # simulated outage: no response at all
+            return
+        self.send(response)
+
+    def answer(self):
+        """The route's answer to the request, its body read first."""
         parts = urlsplit(self.path)
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 <= length <= 4096:
-                response = document(413, {'code': 'request_too_large'})
-            else:
-                self.connection.settimeout(3)
-                body = self.rfile.read(length) if length else b''
-                response = ROUTES[self.server.role](self.server.state, parts.path, parse_qs(parts.query),
-                                                   self.headers, self.command, body)
+                return document(413, {'code': 'request_too_large'})
+            self.connection.settimeout(3)
+            body = self.rfile.read(length) if length else b''
+            return ROUTES[self.server.role](self.server.state, parts.path, parse_qs(parts.query),
+                                            self.headers, self.command, body)
         except (ValueError, TimeoutError):
-            response = document(400, {'code': 'bad_request'})
+            return document(400, {'code': 'bad_request'})
         except Exception:
-            response = document(500, {'code': 'fixture_error'})
-        if response is None:
-            self.close_connection = True  # simulated outage: no response at all
-            return
-        # A fifth item, if any, gives the rate in bytes per second to send
-        # the body at, or None for full speed (a network that slows down).
-        # A body that is not bytes yields the pieces of an answer with no
-        # length, which ends when the connection closes.
+            return document(500, {'code': 'fixture_error'})
+
+    def send(self, response):
+        """Sends `response`. A fifth item, if any, gives the rate in bytes
+        per second to send the body at, or None for full speed (a network
+        that slows down). A body that is not bytes yields the pieces of an
+        answer with no length, which ends when the connection closes."""
         status, content_type, body, headers, *rate = response
         pieces = [body] if isinstance(body, bytes) else body
         pace = rate[0] if rate else lambda: None
@@ -115,12 +123,28 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def live_channels(live):
+    """The names of the live channels `live` asks for: none for False,
+    every one for True, else those it names."""
+    if live is True:
+        return set(LIVE_CHANNELS)
+    names = set(live or ())
+    unknown = names - set(LIVE_CHANNELS)
+    if unknown:
+        raise ValueError('unknown live channels: ' + ', '.join(sorted(unknown)))
+    return names
+
+
 class Lab:
+    """`live` is False, True for every live channel, or the names of those
+    to serve: each one encodes in real time."""
+
     def __init__(self, manual_clock=False, api_port=0, resolver_port=0, media_port=0,
                  host='127.0.0.1', tls=False, live=False, segment_seconds=SEGMENT_SECONDS):
         self.ports = {'api': api_port, 'resolver': resolver_port, 'media': media_port}
         self.manual_clock = manual_clock
-        self.host, self.tls, self.with_live = host, tls, live
+        self.host, self.tls = host, tls
+        self.live = live_channels(live)
         self.segment_seconds = segment_seconds
         self.channels = {}
         self.certificate = None
@@ -137,37 +161,46 @@ class Lab:
             media_dir = Path(self.temporary.name)
             generate(media_dir)
             self.state = State(media_dir, Clock(manual=self.manual_clock))
-            if self.with_live:
-                for name, (codec, variants) in CHANNELS.items():
-                    self.channels[name] = Live(media_dir / name, codec, variants, self.segment_seconds)
-                for name, (size, codec, bitrate) in PACKAGED_CHANNELS.items():
-                    self.channels[name] = PackagedLive(media_dir / name, size, codec, bitrate, self.segment_seconds)
-                self.state.channels = self.channels
-            context = None
-            if self.tls:
-                context, self.certificate = server_context(media_dir, self.host)
-            scheme = 'https' if self.tls else 'http'
-            for role, port in self.ports.items():
-                server = ThreadingHTTPServer((self.host, port), Handler)
-                server.daemon_threads = True
-                if context:
-                    # The handshake runs in each connection's thread (Handler.setup),
-                    # not in the accepting thread.
-                    server.socket = context.wrap_socket(server.socket, server_side=True,
-                                                        do_handshake_on_connect=False)
-                server.role, server.state = role, self.state
-                self.servers.append(server)
-                self.state.origins[role] = f'{scheme}://{self.host}:{server.server_port}'
-            for server in self.servers:
-                thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
-                thread.start()
-                self.threads.append(thread)
+            self.start_channels(media_dir)
+            self.start_servers(media_dir)
             for channel in self.channels.values():
                 channel.wait_ready()
             return self
         except BaseException:
             self.close()
             raise
+
+    def start_channels(self, media_dir):
+        """The live channels asked for, each with its encoder running."""
+        for name, (codec, variants) in CHANNELS.items():
+            if name in self.live:
+                self.channels[name] = Live(media_dir / name, codec, variants, self.segment_seconds)
+        for name, (size, codec, bitrate) in PACKAGED_CHANNELS.items():
+            if name in self.live:
+                self.channels[name] = PackagedLive(media_dir / name, size, codec, bitrate, self.segment_seconds)
+        self.state.channels = self.channels
+
+    def start_servers(self, media_dir):
+        """The three origins, each serving on a thread of its own."""
+        context = None
+        if self.tls:
+            context, self.certificate = server_context(media_dir, self.host)
+        scheme = 'https' if self.tls else 'http'
+        for role, port in self.ports.items():
+            server = ThreadingHTTPServer((self.host, port), Handler)
+            server.daemon_threads = True
+            if context:
+                # The handshake runs in each connection's thread (Handler.setup),
+                # not in the accepting thread.
+                server.socket = context.wrap_socket(server.socket, server_side=True,
+                                                    do_handshake_on_connect=False)
+            server.role, server.state = role, self.state
+            self.servers.append(server)
+            self.state.origins[role] = f'{scheme}://{self.host}:{server.server_port}'
+        for server in self.servers:
+            thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+            thread.start()
+            self.threads.append(thread)
 
     def close(self):
         for channel in self.channels.values():

@@ -36,27 +36,34 @@ def decode_envelope(html):
     return value
 
 def extract_embedded_streams(html):
-    decoder = json.JSONDecoder()
     result = {}
     # Decode serialized data only; no eval or execution of JavaScript.
+    for payload in flight_payloads(html):
+        for row in stream_rows(payload):
+            result[row.get('_id') or row['streaming_link']] = row
+    return list(result.values())
+
+def flight_payloads(html):
+    """The text payload of each `self.__next_f.push([n, "…"])` call."""
+    decoder = json.JSONDecoder()
     for match in re.finditer(r'self\.__next_f\.push\(', html):
         try:
             argument, _ = decoder.raw_decode(html[match.end():])
         except ValueError:
             continue
-        if not isinstance(argument, list) or len(argument) < 2 or not isinstance(argument[1], str):
+        if isinstance(argument, list) and len(argument) >= 2 and isinstance(argument[1], str):
+            yield argument[1]
+
+def stream_rows(payload):
+    """The rows with a streaming link of every `"streams"` list in `payload`."""
+    decoder = json.JSONDecoder()
+    for marker in re.finditer(r'"streams"\s*:\s*', payload):
+        try:
+            rows, _ = decoder.raw_decode(payload[marker.end():])
+        except ValueError:
             continue
-        for marker in re.finditer(r'"streams"\s*:\s*', argument[1]):
-            try:
-                rows, _ = decoder.raw_decode(argument[1][marker.end():])
-            except ValueError:
-                continue
-            if isinstance(rows, list):
-                for row in rows:
-                    if isinstance(row, dict) and 'streaming_link' in row:
-                        key = row.get('_id') or row['streaming_link']
-                        result[key] = row
-    return list(result.values())
+        if isinstance(rows, list):
+            yield from (row for row in rows if isinstance(row, dict) and 'streaming_link' in row)
 
 def varint(data, pos):
     value = 0
@@ -78,24 +85,25 @@ def decode_binary(data):
         field, wire = tag >> 3, tag & 7
         if not field:
             raise ValueError('Invalid Protobuf field')
-        if wire == 0:
-            value, pos = varint(data, pos)
-        elif wire == 2:
-            size, pos = varint(data, pos)
-            end = pos + size
-            if end > len(data):
-                raise ValueError('Truncated Protobuf field')
-            value, pos = data[pos:end], end
-        elif wire in (1, 5):
-            size = 8 if wire == 1 else 4
-            if pos + size > len(data):
-                raise ValueError('Truncated Protobuf number')
-            value = struct.unpack('<d' if wire == 1 else '<f', data[pos:pos + size])[0]
-            pos += size
-        else:
-            raise ValueError(f'Unsupported Protobuf wire type {wire}')
+        value, pos = field_value(data, pos, wire)
         result.setdefault(field, []).append(value)
     return result
+
+def field_value(data, pos, wire):
+    """The value of wire type `wire` at `pos`, and the position after it."""
+    if wire == 0:
+        return varint(data, pos)
+    if wire == 2:
+        size, pos = varint(data, pos)
+        if pos + size > len(data):
+            raise ValueError('Truncated Protobuf field')
+        return data[pos:pos + size], pos + size
+    if wire in (1, 5):
+        size = 8 if wire == 1 else 4
+        if pos + size > len(data):
+            raise ValueError('Truncated Protobuf number')
+        return struct.unpack('<d' if wire == 1 else '<f', data[pos:pos + size])[0], pos + size
+    raise ValueError(f'Unsupported Protobuf wire type {wire}')
 
 def first_field(message, field, default=None):
     return message.get(field, [default])[0]

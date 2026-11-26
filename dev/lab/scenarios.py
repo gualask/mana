@@ -2,9 +2,13 @@
 import json
 import re
 import secrets
+import time
 from urllib.parse import urlencode
 from . import binary
 from .state import UA
+
+# The longest wait /faults/slow grants, in seconds.
+SLOW_LIMIT = 10
 
 
 def document(status, value, headers=None):
@@ -26,33 +30,21 @@ def api(state, path, query, headers, method, body):
     if path == '/health':
         return document(200, {'service': 'stream-synthetic-lab', 'role': 'api'})
     if path == '/control/live-stats' and method == 'GET':
-        with state.lock:
-            return document(200, {'accepted': state.counts.get('live-accepted', 0),
-                                  'rejected': state.counts.get('live-rejected', 0)})
+        return live_stats(state)
     if path in ('/control/live-restart', '/control/live-outage', '/control/live-stall',
                 '/control/live-throttle') and method == 'POST':
         return live_control(state, path, body)
     if path == '/control/live-token' and method == 'POST':
-        if state.live is None:
-            return document(404, {'code': 'not_found'})
-        with state.lock:
-            state.live_token = secrets.token_hex(8)
-            return document(200, {'token': state.live_token})
+        return new_live_token(state)
     if path == '/control/advance' and method == 'POST':
-        try:
-            seconds = json.loads(body)['seconds']
-            if isinstance(seconds, bool) or not isinstance(seconds, int) or not 0 <= seconds <= 3600:
-                raise ValueError()
-        except (ValueError, KeyError, TypeError):
-            return document(400, {'code': 'invalid_clock_advance'})
-        return document(200, {'now': state.clock.advance(seconds)})
+        return advance_clock(state, body)
     if method != 'GET':
         return document(405, {'code': 'method_not_allowed'})
     signed = binary.handle(state, path, query, headers)
     if signed is not None:
         return signed
     if path == '/channels.m3u':
-        return text(200, '#EXTM3U\n#EXTINF:-1,Synthetic bars and tone\n' + state.origins['media'] + '/public/master.m3u8\n', 'audio/x-mpegurl')
+        return text(200, '#EXTM3U\n#EXTINF:-1,Synthetic bars and tone\n' + state.public_url() + '\n', 'audio/x-mpegurl')
     if path == '/embedded':
         payload = json.dumps({'streams': [dict(signal, streaming_link=signal['url']) for signal in signals(state)]})
         return text(200, '<!doctype html><script>self.__next_f = [];self.__next_f.push(' + json.dumps([1, payload]) + ');</script>')
@@ -66,14 +58,12 @@ def api(state, path, query, headers, method, body):
         return text(200, '{not valid JSON', 'application/json')
     if path == '/faults/redirect-loop':
         return text(302, '', headers={'Location': state.origins['api'] + path})
+    if path == '/faults/slow':
+        return slow(state, query)
     if headers.get('User-Agent') != UA:
         return document(403, {'code': 'wrong_user_agent'})
     if path == '/live/resolve.json' and state.live is not None:
-        # Shaped as RaiPlay's live channel JSON: the URL to play, with the
-        # current token, under video.content_url.
-        with state.lock:
-            url = f"{state.origins['media']}/live/master.m3u8?t={state.live_token}"
-        return document(200, {'video': {'content_url': url}})
+        return live_resolve(state)
     if path == '/catalogue.json':
         return document(200, [{'id': 'demo', 'title': 'Synthetic bars and tone', 'signals': signals(state)[:1]},
                               {'id': 'empty', 'title': 'Empty event', 'signals': []}])
@@ -84,6 +74,52 @@ def api(state, path, query, headers, method, body):
         data, extra = state.binary_session()
         return 200, 'application/x-protobuf', data, extra
     return document(404, {'code': 'not_found'})
+
+
+def live_stats(state):
+    with state.lock:
+        return document(200, {'accepted': state.counts.get('live-accepted', 0),
+                              'rejected': state.counts.get('live-rejected', 0),
+                              'resolved': state.counts.get('live-resolved', 0)})
+
+
+def new_live_token(state):
+    """Changes the first channel's token, as an expiring CDN token."""
+    if state.live is None:
+        return document(404, {'code': 'not_found'})
+    with state.lock:
+        state.live_token = secrets.token_hex(8)
+        return document(200, {'token': state.live_token})
+
+
+def advance_clock(state, body):
+    try:
+        seconds = integer(json.loads(body)['seconds'], 0, 3600)
+    except (ValueError, KeyError, TypeError):
+        return document(400, {'code': 'invalid_clock_advance'})
+    return document(200, {'now': state.clock.advance(seconds)})
+
+
+def slow(state, query):
+    """A resolution that comes late: the public clip, after the seconds
+    asked, at most SLOW_LIMIT."""
+    try:
+        seconds = float(query.get('seconds', ['1'])[0])
+    except ValueError:
+        return document(400, {'code': 'invalid_delay'})
+    if not 0 <= seconds <= SLOW_LIMIT:
+        return document(400, {'code': 'invalid_delay'})
+    time.sleep(seconds)
+    return document(200, {'url': state.public_url()})
+
+
+def live_resolve(state):
+    """Shaped as RaiPlay's live channel JSON: the URL to play, with the
+    current token, under video.content_url; counted for /control/live-stats."""
+    state.count('live-resolved')
+    with state.lock:
+        url = f"{state.origins['media']}/live/master.m3u8?t={state.live_token}"
+    return document(200, {'video': {'content_url': url}})
 
 
 def resolver(state, path, query, headers, method, body):
@@ -114,27 +150,39 @@ def media(state, path, query, headers, method, body):
         return live(state, state.channels[channel[1]], path[channel.end():], headers, query)
     protected = path.startswith('/protected/')
     session = re.fullmatch(r'/token-([A-Za-z0-9_%-]+)/session/(.+)', path)
+    if not (protected or session or path.startswith('/public/')):
+        return document(404, {'code': 'not_found'})
     if protected or session:
-        if any(headers.get(key) != value for key, value in state.headers().items()):
-            return document(403, {'code': 'missing_media_headers'})
-        if protected:
-            error = state.check_signature(query)
-        else:
-            with state.lock:
-                expiry = state.sessions.get(session[1])
-            error = 'invalid_session' if expiry is None else 'token_expired' if expiry <= state.clock.now() else None
+        error = clip_refusal(state, query, headers, None if protected else session[1])
         if error:
             return document(403, {'code': error})
-    elif not path.startswith('/public/'):
-        return document(404, {'code': 'not_found'})
     name = session[2] if session else path.split('/')[-1]
+    return clip_file(state, name, query if protected else None)
+
+
+def clip_refusal(state, query, headers, session):
+    """Why a request for the protected clip, or for the clip of `session`,
+    is refused; None when it may be served."""
+    if any(headers.get(key) != value for key, value in state.headers().items()):
+        return 'missing_media_headers'
+    if session is None:
+        return state.check_signature(query)
+    with state.lock:
+        expiry = state.sessions.get(session)
+    if expiry is None:
+        return 'invalid_session'
+    return 'token_expired' if expiry <= state.clock.now() else None
+
+
+def clip_file(state, name, signed):
+    """The clip's master, media playlist or segment `name`; with the
+    `signed` query, every link of the playlists carries it."""
+    suffix = '' if signed is None else '?' + encode_query(signed)
     if name == 'master.m3u8':
-        suffix = '?' + encode_query(query) if protected else ''
         return text(200, '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=320x180\nindex.m3u8' + suffix + '\n', 'application/vnd.apple.mpegurl')
     if name == 'index.m3u8':
         playlist = (state.media_dir / name).read_text()
-        if protected:
-            suffix = '?' + encode_query(query)
+        if suffix:
             playlist = '\n'.join(line + suffix if line and not line.startswith('#') else line for line in playlist.splitlines()) + '\n'
         return text(200, playlist, 'application/vnd.apple.mpegurl')
     if re.fullmatch(r'segment-\d{3}\.ts', name) and (state.media_dir / name).is_file():
@@ -148,40 +196,53 @@ def number(value, low, high):
     return value
 
 
+def integer(value, low, high):
+    """`value`, an integer from `low` to `high` included; ValueError otherwise."""
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError()
+    return value
+
+
 def live_control(state, path, body):
-    """Fault injection: restart the encoder (timestamps from an offset in
-    seconds or shifted from where they were, numbering optionally from 0),
-    drop live requests, freeze the playlist, or serve slowly, for a number of
-    seconds."""
+    """Fault injection on the first channel: restart its encoder, or
+    disturb it for a number of seconds."""
     if state.live is None:
         return document(404, {'code': 'not_found'})
     try:
         values = json.loads(body or b'{}')
         if path == '/control/live-restart':
-            offset = number(values.get('ts_offset', 0), 0, 2 ** 33 / 90000)
-            shift = values.get('ts_shift')
-            shift = None if shift is None else number(shift, -30, 30)
-            reset = values.get('reset_sequence', False)
-            if not isinstance(reset, bool):
-                raise ValueError()
-            state.live.restart(offset, ts_shift=shift, reset_sequence=reset)
-            return document(200, {'restarted': True, 'ts_offset': offset, 'ts_shift': shift, 'reset_sequence': reset})
-        seconds = values['seconds']
-        if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 120:
-            raise ValueError()
-        if path == '/control/live-throttle':
-            kbps = values['kbps']
-            if isinstance(kbps, bool) or not isinstance(kbps, int) or not 64 <= kbps <= 100_000:
-                raise ValueError()
-            state.live.throttle(seconds, kbps)
-            return document(200, {'throttle_seconds': seconds, 'kbps': kbps})
-        if path == '/control/live-stall':
-            state.live.stall(seconds)
-            return document(200, {'stall_seconds': seconds})
-        state.live.outage(seconds)
-        return document(200, {'outage_seconds': seconds})
+            return restart_live(state.live, values)
+        return disturb_live(state.live, path, values)
     except (ValueError, KeyError, TypeError, AttributeError):
         return document(400, {'code': 'invalid_live_control'})
+
+
+def restart_live(channel, values):
+    """Restarts the encoder: timestamps from an offset in seconds or
+    shifted from where they were, numbering optionally from 0."""
+    offset = number(values.get('ts_offset', 0), 0, 2 ** 33 / 90000)
+    shift = values.get('ts_shift')
+    shift = None if shift is None else number(shift, -30, 30)
+    reset = values.get('reset_sequence', False)
+    if not isinstance(reset, bool):
+        raise ValueError()
+    channel.restart(offset, ts_shift=shift, reset_sequence=reset)
+    return document(200, {'restarted': True, 'ts_offset': offset, 'ts_shift': shift, 'reset_sequence': reset})
+
+
+def disturb_live(channel, path, values):
+    """For a number of seconds: serve slowly, freeze the playlist, or drop
+    every request."""
+    seconds = integer(values['seconds'], 1, 120)
+    if path == '/control/live-throttle':
+        kbps = integer(values['kbps'], 64, 100_000)
+        channel.throttle(seconds, kbps)
+        return document(200, {'throttle_seconds': seconds, 'kbps': kbps})
+    if path == '/control/live-stall':
+        channel.stall(seconds)
+        return document(200, {'stall_seconds': seconds})
+    channel.outage(seconds)
+    return document(200, {'outage_seconds': seconds})
 
 
 def live(state, channel, name, headers, query):

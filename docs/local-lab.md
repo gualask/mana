@@ -10,8 +10,10 @@ providers. The scenarios are defined by protocol and behaviour.
 contract/integration tests. The lab's chains are written as source files
 in [`config/examples/`](../config/examples/), which Mana's engine runs in
 `cargo test` against a network that answers as the lab does
-([run/tests.rs](../crates/core/src/source/run/tests.rs)). The media server can already be
-attached to an HLS player to verify transport and decoding.
+([run/tests.rs](../crates/core/src/source/run/tests.rs)), and the
+[player e2e tests](#player-e2e-tests) play them through the session against
+the lab itself. The media server can also be attached to any HLS player to
+verify transport and decoding.
 
 ## Start and playback
 
@@ -34,7 +36,11 @@ listen only on `127.0.0.1`. Options:
 - `--host IP`: listen on a local network address, for example for the TV;
 - `--tls`: serve HTTPS with a CA generated at startup and a server certificate
   signed by it; clients must add the CA as a trusted root;
-- `--live`: add three live HLS channels generated in real time;
+- `--live [CHANNEL …]`: add the live HLS channels generated in real time,
+  all three, or only those named (`live`, `live2`, `live3`), each an encoder
+  running;
+- `--until-stdin-closes`: stop when standard input closes, so that a test
+  harness that ends, even killed, takes the lab and its encoders with it;
 - `--segment-seconds N`: segment duration of the live streams, 2 s if omitted;
   real live streams use 4 to 10, and tests of the margin from the live edge
   need segments of that duration.
@@ -88,10 +94,11 @@ catalogue/API → resolver → media server → real decoder
 | API `/faults/server-error` | HTTP 503 |
 | API `/faults/malformed.json` | HTTP 200 with invalid JSON |
 | API `/faults/redirect-loop` | HTTP redirect loop |
+| API `/faults/slow?seconds=n` | After n seconds (at most 10), JSON whose `url` is the public HLS: a resolution that comes late |
 | Media `/live/master.m3u8` and `/live2/master.m3u8` | With `--live`: two sliding-window live channels (6 segments of 2 s, or of the `--segment-seconds` duration) with AES-128 segments. The second is 720p25 HEVC. The first is H.264 with three variants encoded together, so with aligned segments: 1080p at 4 Mbit/s (`index.m3u8`), 720p at 2 Mbit/s and 360p at 800 kbit/s. Playlists, key and segments require the headers of the protected media |
 | Media `/live3/master.m3u8` | With `--live`: 720p25 H.264 as FFmpeg packages it, fMP4 segments and audio in a separate track (`EXT-X-MEDIA`), without encryption or injectable faults |
 | Media `/live/stream.ts` | With `--live`: the first channel as a single MPEG-TS response without a length, as IPTV servers send it: its decrypted segments one after the other, starting from the middle of the most recent one. Restarts, outages and slowdowns of the first channel apply here too, and an outage closes the response when it ends |
-| API `/control/live-stats` | Live stream requests accepted and rejected because of the headers |
+| API `/control/live-stats` | Live stream requests accepted and rejected because of the headers, and readings of `/live/resolve.json` |
 | API `POST /control/live-restart` | Restarts the encoder of the first channel. `{"ts_offset": s}` starts the timestamps from `s` seconds (near 95443 the 33-bit MPEG-TS clock wraps to zero shortly after); `{"ts_shift": s}` starts them `s` seconds after the point reached, earlier if negative (on the TV the jump turned out about 2 s further back: `-1` gave −3.5 s, `2` gave +0.4 s). The playlist marks `EXT-X-DISCONTINUITY`, or with `{"reset_sequence": true}` it restarts from segment 0 with only the new encoder |
 | API `POST /control/live-outage` | `{"seconds": n}`: for n seconds the requests of the first channel are closed without a response, like a missing network |
 | API `POST /control/live-throttle` | `{"seconds": n, "kbps": k}`: for n seconds the responses of the first channel arrive at k kbit/s, like a slow network |
@@ -143,8 +150,8 @@ The tests verify:
 
 The suite uses the [local decoders](../dev/lab/codecs.py) for the wrapper, the
 embedded data and the binary message. It imports no external research tools.
-Selection, fallback and new resolution are driven by the test and are not
-the future application runtime.
+Selection, fallback and new resolution are driven by the test client here;
+the [player e2e tests](#player-e2e-tests) leave them to Mana.
 The FFmpeg check requires decoded frames and non-empty PCM audio output,
 without saving the video. It does not verify listening or visual rendering.
 
@@ -166,32 +173,41 @@ live stream is instead tested on the TV with the token of the first live channel
 channel whose source reads that JSON (as [lab-live](../config/examples/lab-live.toml),
 with the lab's addresses), receives 403 and resolves the candidate again.
 
-## Moving to player e2e tests
+## Player e2e tests
 
 The lab stays outside the core, as described in [Modular architecture](architecture.md).
 Error classes and protocols are described by behaviour, so the
 fixtures stay useful for future providers too.
 
-The e2e tests will have to use the engine, its models and the session. The test will have to import
-a local profile, get the catalogue, select an event, apply the
-fallback and verify playback, then force expiry/renewal or a channel
-change. The test client will be replaced by the application, keeping the
-servers and the observable expectations. The fixture manifest will make it
-possible to map the assigned ports to the profiles during the test.
+[`crates/core/tests/lab/`](../crates/core/tests/lab/main.rs) runs in
+`cargo test`, after the core's own tests, so that the lab's encoders do not
+slow down their timings. Each test starts its own lab, with
+`--until-stdin-closes` and the ports the system assigns, and gives the app
+a channel list with the sources of `config/examples/`, their fixed
+addresses replaced with the lab's. From there it follows the app's path:
+the list read as the app reads it, a source's folder, the signals of an
+event, the session playing on a decoder that records what it receives.
+It needs the lab's requirements, above.
+
+| Test | What it verifies |
+|---|---|
+| The signals of an event | The folder of `lab-events` with its two events; the event with two signals asks the viewer; the denied one ends with its HTTP 403 without loading the decoder; the other, through the AES-GCM envelope, plays the signed clip to its end with video and audio; the event without signals says so |
+| Channel change | A channel whose resolution answers 2 s late (`/faults/slow`) changed for the clip: the change returns at once, and the late answer opens no decoder |
+| Token refused while playing | `lab-live` on the first live channel: after `POST /control/live-token`, the refused playlist has the source read `/live/resolve.json` again, and the timeline goes on |
 
 | Level | Status |
 |---|---|
 | Fixture/parser contract and HTTP integration | Implemented in the suite |
 | Real decoder with synthetic media over HTTP | Implemented with FFmpeg |
 | Execution of source files | The engine in `cargo test` on every example; channels with a source in the app |
-| E2e of the Mana session and UI | To connect to the runtime |
-| Decoder, remote control, HLS with headers and webOS lifecycle | Verified on the TV ([checks](tv-app.md#verification-on-the-b1)) |
+| E2e of the Mana session | In `cargo test`, on a recording decoder |
+| Screens, decoder, remote control, HLS with headers and webOS lifecycle | Verified on the TV ([checks](tv-app.md#verification-on-the-b1)) |
 
 Other scenarios to add when the runtime's capabilities require them:
 byte ranges, discontinuities with fMP4, DASH/progressive, cookies,
-transient 5xx, slow network,
-loops between resolvers, and cancellation. DRM and P2P require specific
-environments and backends; this first version does not simulate them.
+transient 5xx, slow network and loops between resolvers. DRM and P2P
+require specific environments and backends; this first version does not
+simulate them.
 
 ## Components
 

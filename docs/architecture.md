@@ -280,8 +280,9 @@ configuration.
 
 The [Synthetic lab](local-lab.md) is already available: it generates original
 media and serves catalogue, resolution, session and failure cases.
-The current tests check contracts and FFmpeg decoders; the application e2e
-tests will use the same servers through the future Mana runtime.
+Its tests check contracts and FFmpeg decoders, and the
+[player e2e tests](local-lab.md#player-e2e-tests) run Mana's list, sources
+and session against the same servers.
 
 The operational sequence and the completion criteria are kept in
 [Next steps and open questions](todo.md).

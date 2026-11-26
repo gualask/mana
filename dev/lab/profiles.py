@@ -22,7 +22,7 @@ def write_config(state, directory, certificate=None):
     lines += [role + ' = ' + json.dumps(origin) for role, origin in origins.items()]
     lines += ['', '[media_headers]'] + [json.dumps(key) + ' = ' + json.dumps(value) for key, value in state.headers().items()]
     lines += ['', '[endpoints]', 'catalogue = ' + json.dumps(origins['api'] + '/catalogue.json'),
-              'public_hls = ' + json.dumps(origins['media'] + '/public/master.m3u8'),
+              'public_hls = ' + json.dumps(state.public_url()),
               'm3u = ' + json.dumps(origins['api'] + '/channels.m3u'),
               'wrapper = ' + json.dumps(origins['resolver'] + '/wrapper'),
               'session = ' + json.dumps(origins['api'] + '/session.pb')]
@@ -43,6 +43,6 @@ items = [{ id = "synthetic", title = "Generated bars and tone", url = MEDIA_URL 
 id = "stream"
 op = "stream"
 url = "{input.candidate.url}"
-'''.replace('MEDIA_URL', json.dumps(origins['media'] + '/public/master.m3u8'))
+'''.replace('MEDIA_URL', json.dumps(state.public_url()))
     (directory / 'direct.toml').write_text(source)
     return directory / 'endpoints.toml'

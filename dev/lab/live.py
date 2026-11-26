@@ -163,15 +163,8 @@ class Live:
         found = []
         for index, run in runs:
             playlist = run / f'index-{variant}.m3u8'
-            if not playlist.is_file():
-                continue
-            duration = None
-            for line in playlist.read_text().splitlines():
-                if line.startswith('#EXTINF:'):
-                    duration = line[len('#EXTINF:'):].rstrip(',')
-                elif line and not line.startswith('#') and duration:
-                    found.append((index, f'{run.name}/{line}', duration))
-                    duration = None
+            if playlist.is_file():
+                found += [(index, f'{run.name}/{uri}', duration) for uri, duration in listed(playlist.read_text())]
         return found
 
     def playlist(self, variant):
@@ -292,3 +285,17 @@ def playlist_name(variant):
     """The served name of a variant's playlist: the best one keeps the name
     the lab served before it had variants."""
     return 'index.m3u8' if variant == 0 else f'index-{variant}.m3u8'
+
+
+def listed(playlist):
+    """The segments of the media playlist text `playlist`: (URI, duration
+    as written)."""
+    found = []
+    duration = None
+    for line in playlist.splitlines():
+        if line.startswith('#EXTINF:'):
+            duration = line[len('#EXTINF:'):].rstrip(',')
+        elif line and not line.startswith('#') and duration:
+            found.append((line, duration))
+            duration = None
+    return found
