@@ -12,7 +12,7 @@ use url::Url;
 use super::{Failure, Job, Outcome, Update, list_url};
 use crate::catalog::device::Device;
 use crate::catalog::list::{self, Entry, List};
-use crate::catalog::{COPIES, Channel, ChannelError, Folder, Play, folder, m3u, save};
+use crate::catalog::{COPIES, Channel, ChannelError, Folder, Play, folder, m3u, save, url_file_name};
 use crate::language::Language;
 use crate::log::log;
 use crate::net::{self, Client, loggable};
@@ -186,13 +186,9 @@ fn folder_channel(folder: Folder) -> Channel {
     Channel { name, logo: None, group: None, starts_at: None, play: Ok(Play::Folder(folder)) }
 }
 
-/// The file name of the copy of the M3U list at `url`: a hash of the URL
-/// (FNV-1a), which may be too long for a name.
+/// The file name of the copy of the M3U list at `url`.
 fn copy_name(url: &Url) -> String {
-    let hash = url.as_str().bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, b| {
-        (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-    });
-    format!("{hash:016x}{M3U_COPY}")
+    url_file_name(url.as_str(), M3U_COPY)
 }
 
 /// The text at `url`, of at most MAX_TEXT_BYTES.

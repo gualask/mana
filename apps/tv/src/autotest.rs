@@ -135,7 +135,7 @@ impl Autotest {
         }
         let logos = app.logos();
         self.frames.get_or_insert_with(FrameStats::new).record(draw, || {
-            format!("logos loaded {}, in memory {}, failed {}", logos.loaded, logos.resident(), logos.failed)
+            format!("logos loaded {}, in memory {}, failed {}", logos.loader.loaded, logos.resident(), logos.loader.failed)
         });
     }
 

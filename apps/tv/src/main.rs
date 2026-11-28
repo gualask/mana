@@ -165,6 +165,10 @@ fn handle_event(event: Event, app: &mut App, pointer: &mut Pointer) -> Outcome {
 /// A key of the remote: its action, if any, for the app; an arrow puts the
 /// pointer away.
 fn key(scancode: i32, app: &mut App, pointer: &mut Pointer, now: Instant) -> Outcome {
+    if keys::play_pause(scancode) {
+        app.pause_or_resume();
+        return Outcome::Continue;
+    }
     let Some(action) = keys::action(scancode) else { return Outcome::Continue };
     if matches!(action, Action::Up | Action::Down | Action::Left | Action::Right) {
         pointer.put_away(now);

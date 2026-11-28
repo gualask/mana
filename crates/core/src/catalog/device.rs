@@ -41,7 +41,7 @@ impl Device {
             return None;
         }
         let id = uuid_v4(bytes);
-        let kept = std::fs::create_dir_all(&self.dir).and_then(|()| std::fs::write(self.dir.join(FILE), &id));
+        let kept = crate::files::write_whole(&self.dir.join(FILE), id.as_bytes());
         match kept {
             Ok(()) => log!("new device identifier"),
             Err(error) => log!("device identifier for this session only: {error}"),

@@ -170,6 +170,40 @@ fn backends_open_in_turn_and_a_viewing_stopped_meanwhile_opens_none() {
     assert_eq!(*opened.lock().unwrap(), ["first", "third"]);
 }
 
+#[test]
+fn a_viewing_paused_stops_and_resuming_asks_for_its_stream_again() {
+    let (address, asked) = serve(|_| (404, Vec::new()));
+    let (open, _) = fake::open();
+    let mut session = Session::new(open);
+    session.pause_or_resume().unwrap();
+    assert!(!session.is_playing(), "nothing to pause");
+    session.play("Live".into(), stream_file("paused", &format!("{address}/live.m3u8")), Settings::default()).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    session.pause_or_resume().unwrap();
+    // Paused: still the viewing, saying so, its threads ending.
+    let stats = session.stats().unwrap();
+    assert_eq!((stats.state, stats.name.as_str()), (State::Paused, "Live"));
+    assert!(session.is_playing() && session.is_paused());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.is_stopping() {
+        assert!(Instant::now() < deadline, "the paused viewing does not stop");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let before = asked.lock().unwrap().len();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(asked.lock().unwrap().len(), before, "nothing asked while paused");
+    // Resumed: the stream is asked for again, from the start.
+    session.pause_or_resume().unwrap();
+    assert!(!session.is_paused());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while asked.lock().unwrap().len() == before {
+        assert!(Instant::now() < deadline, "the stream is not asked for again");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    session.stop();
+    assert!(!session.is_playing());
+}
+
 const MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nmedia.m3u8\n";
 
 #[test]

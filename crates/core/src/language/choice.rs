@@ -54,8 +54,7 @@ impl Choice {
 
     /// Keeps the choice in `dir`, for the next starts.
     pub fn save(self, dir: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(dir)?;
-        std::fs::write(dir.join(FILE), self.key())
+        crate::files::write_whole(&dir.join(FILE), self.key().as_bytes())
     }
 
     fn key(self) -> &'static str {

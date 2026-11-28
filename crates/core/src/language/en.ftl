@@ -176,6 +176,7 @@ channels-folder-header = { $folder } · { $focus } of { $count }
 state-starting = Starting
 state-playing = Playing
 state-ending = Ending
+state-paused = Paused
 state-stopped = Stopped
 state-failed = Error: { $failure }
 info-no-audio = none
@@ -237,5 +238,7 @@ phone-closed-meanwhile = Settings closed on the TV: look at the TV for the outco
 ## Desktop
 
 desktop-list-not-set = No list: start Mana with --list and the list's address
-desktop-hint = ↑ ↓ row · ← → page · Enter chooses · Esc back
+desktop-hint = ↑ ↓ row · ← → page · Enter chooses · Esc back · Space pause · + − volume · M mute
+desktop-volume = Volume { $level }%
+desktop-muted = Muted
 desktop-folder = folder

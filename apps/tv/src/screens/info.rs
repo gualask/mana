@@ -1,6 +1,6 @@
 //! The panel over the video: the information on what is playing, closed at
-//! first, shown while a viewing starts and toggled with up or down. It only
-//! reads the counters the viewing keeps anyway.
+//! first, shown while a viewing starts or is paused and toggled with up or
+//! down. It only reads the counters the viewing keeps anyway.
 
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
@@ -63,7 +63,7 @@ impl InfoPanel {
     /// small grey label before its value.
     pub fn draw(&mut self, r: &mut Renderer, t: &mut Text, s: f32, stats: &Stats, language: Language) {
         self.hold_while_waiting(stats);
-        if !self.shown() {
+        if !self.shown() && stats.state != State::Paused {
             return;
         }
         let top = 928.0 * s;

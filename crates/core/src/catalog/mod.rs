@@ -4,6 +4,7 @@
 pub mod device;
 pub mod folder;
 pub mod list;
+pub mod logos;
 pub mod m3u;
 pub mod search;
 pub mod update;
@@ -12,6 +13,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::language::Language;
+use logos::Placeholder;
 use crate::live::playable::Playable;
 use crate::source::{Selection, Source};
 use crate::text;
@@ -58,12 +60,18 @@ pub struct Folder {
 /// includes, the catalogues of its folders.
 const COPIES: &str = "list";
 
-/// Writes the copy `name` in `dir` whole, through a temporary file: a
-/// power-off meanwhile leaves the previous one. Returns whether it was
-/// written.
+/// The name of a file kept for `url`, ending in `suffix`: a hash of the
+/// URL (FNV-1a), which may be too long for a name.
+fn url_file_name(url: &str, suffix: &str) -> String {
+    let hash = url.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, b| (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{hash:016x}{suffix}")
+}
+
+/// Writes the copy `name` in `dir` whole (`files::write_whole`). Returns
+/// whether it was written.
 fn save(dir: &std::path::Path, name: &str, text: &str) -> bool {
-    let (path, temporary) = (dir.join(name), dir.join(format!("{name}.new")));
-    let saved = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&temporary, text)).and_then(|()| std::fs::rename(&temporary, &path));
+    let path = dir.join(name);
+    let saved = crate::files::write_whole(&path, text.as_bytes());
     if let Err(error) = &saved {
         crate::log::log!("copy {} not saved: {error}", path.display());
     }
@@ -82,5 +90,36 @@ impl Channel {
     /// channel without one, in `language`.
     pub fn title(&self, language: Language) -> Cow<'_, str> {
         self.name.as_deref().map_or_else(|| Cow::Owned(text!(language, "channel-unnamed")), Cow::Borrowed)
+    }
+
+    /// What the screens show in its logo's box while it has none: a
+    /// folder's mark for a folder, else the first letter or digit of its
+    /// title, capital.
+    pub fn placeholder(&self, language: Language) -> Placeholder {
+        if matches!(self.play, Ok(Play::Folder(_))) {
+            return Placeholder::Folder;
+        }
+        let initial = self.title(language).chars().find(|c| c.is_alphanumeric());
+        Placeholder::Initial(initial.map(|c| c.to_uppercase().collect()).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_channel_s_placeholder_is_its_initial_or_a_folder_s_mark() {
+        let channel = |name: Option<&str>| Channel { name: name.map(str::to_owned), logo: None, group: None, starts_at: None, play: Err(ChannelError::NoStream) };
+        let initial = |name: Option<&str>, language| match channel(name).placeholder(language) {
+            Placeholder::Initial(initial) => initial,
+            Placeholder::Folder => panic!("not a folder"),
+        };
+        assert_eq!(initial(Some("rai 1"), Language::English), "R");
+        assert_eq!(initial(Some("«7 Gold»"), Language::English), "7");
+        assert_eq!(initial(Some("équipe"), Language::English), "É");
+        assert_eq!(initial(Some("· ·"), Language::English), "");
+        let unnamed = channel(None).title(Language::Italian).chars().next().unwrap().to_uppercase().to_string();
+        assert_eq!(initial(None, Language::Italian), unnamed);
     }
 }

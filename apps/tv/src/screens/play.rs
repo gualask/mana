@@ -79,6 +79,20 @@ impl App {
         Ok(())
     }
 
+    /// Play or Pause: pauses the viewing, or resumes the one paused from
+    /// the live point; nothing without a viewing.
+    pub fn pause_or_resume(&mut self) {
+        if !self.session.is_playing() {
+            return;
+        }
+        if self.session.is_paused() {
+            self.info.started();
+        }
+        if let Err(failure) = self.session.pause_or_resume() {
+            self.message = Some(Message::NotStarted(failure));
+        }
+    }
+
     /// Starts a viewing with the playback settings of the files as they are
     /// now, read again each time so they can change over SSH; a failure to
     /// start shows on the home screen. The settings screen closes, with its

@@ -1,18 +1,23 @@
 //! The window: the video over the whole of it, the list on the left while
 //! open, the status at the top while there is something to say.
 
+use mana_core::catalog::logos::{BOX, Placeholder};
 use mana_core::session::State as Viewing;
 use mana_core::text;
 use rune::tok::{self, TextStyle};
 use rune::{Color, Cx, El, GrowthSpec, ScrollSpec, SurfaceFit, col, el, oklch, row, text};
 
-use crate::app::{App, Kind, Note};
+use crate::app::{App, Kind, Note, Row};
 
 const PANEL_WIDTH: f32 = 520.0;
 const ROW_HEIGHT: f32 = 60.0;
+/// A logo's box in a row: the core's, at the height of a row's names.
+const LOGO_HEIGHT: f32 = 40.0;
+const LOGO_SIZE: (f32, f32) = (BOX.0 * LOGO_HEIGHT / BOX.1, LOGO_HEIGHT);
 const NAME: TextStyle = TextStyle::new(17.0, 600.0);
 const DETAIL: TextStyle = TextStyle::new(13.0, 400.0);
 const HEADING: TextStyle = TextStyle::new(22.0, 700.0);
+const INITIAL: TextStyle = TextStyle::new(18.0, 600.0);
 
 pub fn view(app: &App, _: &mut Cx<App>) -> El {
     let video = el().key("video").w_full().h_full().native_surface(&app.surface, SurfaceFit::Fit);
@@ -71,14 +76,34 @@ fn list_row(app: &App, i: usize) -> El {
     }
     title = title.child(text(item.title.clone()).font(NAME).color(t.text).single_line());
     let names = col().gap(2.0).child(title).child(text(item.detail.clone()).font(DETAIL).color(secondary).single_line());
-    row()
+    let mut line = row()
         .h(ROW_HEIGHT)
         .w_full()
         .px(16.0)
+        .gap(14.0)
         .items_center()
         .radius(10.0)
-        .fill(if focused { oklch(0.52, 0.19, 262.0) } else { Color::TRANSPARENT })
-        .child(names)
+        .fill(if focused { oklch(0.52, 0.19, 262.0) } else { Color::TRANSPARENT });
+    if level.with_logos() {
+        line = line.child(logo(app, item));
+    }
+    line.child(names)
+}
+
+/// The row's logo fitted in its box; while it has none, or it has not
+/// come, the box with its placeholder.
+fn logo(app: &App, item: &Row) -> El {
+    let frame = el().w(LOGO_SIZE.0).h(LOGO_SIZE.1).radius(4.0);
+    let Some(channel) = item.channel() else { return frame };
+    if let Some(pixels) = channel.logo.as_deref().and_then(|url| app.logos.get(url)) {
+        return frame.pixels_fit(pixels, SurfaceFit::Fit);
+    }
+    let muted = tok::theme(true).text_secondary;
+    let mark = match channel.placeholder(app.language) {
+        Placeholder::Folder => col().child(el().w(12.0).h(5.0).fill(muted)).child(el().w(28.0).h(18.0).fill(muted)),
+        Placeholder::Initial(initial) => text(initial).font(INITIAL).color(muted),
+    };
+    frame.fill(oklch(0.29, 0.03, 265.0)).center().child(mark)
 }
 
 /// The name and the state of what plays, with the list open or while there
@@ -87,7 +112,7 @@ fn list_row(app: &App, i: usize) -> El {
 fn status(app: &App) -> Option<El> {
     let t = tok::theme(true);
     let playing = app.session.stats().is_some_and(|stats| stats.state == Viewing::Playing);
-    if !app.list_open && playing && matches!(app.note, Note::None) {
+    if !app.list_open && playing && matches!(app.note, Note::None) && !app.volume_shown() {
         return None;
     }
     let (name, status) = (app.playing(), app.status());

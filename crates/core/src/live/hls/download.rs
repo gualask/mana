@@ -9,7 +9,6 @@
 //! cut into sections at each discontinuity and new initialization section,
 //! where streams and formats may change: each section is demuxed afresh.
 
-use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,7 +19,7 @@ use super::downloader::{Downloader, Failure, Fetched};
 use super::ladder::Ladder;
 use super::playlist::{self, parse_master, text};
 use super::ts;
-use super::stream::{Chunk, HlsStream, Stop};
+use super::stream::{self, HlsStream, Sender, Stop};
 use crate::live::playable::Playable;
 use crate::live::{Cause, Interruption, QualityChoice, Stats};
 use crate::log::log;
@@ -29,6 +28,13 @@ use crate::net::{self, Client};
 /// Downloaded segments waiting for the demuxer, each of at most
 /// segment::MAX_BYTES.
 const QUEUED_SEGMENTS: usize = 3;
+/// Bytes of them waiting past the first: a 4K channel's 10 s segments,
+/// 31 MB at 25 Mbit/s, wait one at a time, 6 s ones two at a time, while
+/// those of Rai 1 and Nove (3–6 MB) never reach it. hls.js stops loading
+/// past 60 MB ahead (`maxBufferSize`), Media3 past 125 MiB of video
+/// (`DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE`); a B1 has about
+/// 440 MB free.
+const QUEUED_BYTES: usize = 48 * 1024 * 1024;
 
 /// The byte streams of a stream to play: video (with muxed audio, if any) and an
 /// audio rendition of its own, when the variant has one.
@@ -135,7 +141,7 @@ fn follow(
     ladder: Option<&Arc<Mutex<Ladder>>>,
     stop: &Stop,
 ) -> std::io::Result<HlsStream> {
-    let (sender, queue) = sync_channel(QUEUED_SEGMENTS);
+    let (sender, stream) = stream::queue(QUEUED_SEGMENTS, QUEUED_BYTES, stop.clone());
     let mut downloader = Downloader::new(client.clone(), "hls");
     if let Some(ladder) = ladder {
         downloader = downloader.switching(ladder.clone());
@@ -144,12 +150,12 @@ fn follow(
     std::thread::Builder::new()
         .name("hls".into())
         .spawn(move || download(&mut downloader, &playlist, first, &sender, &thread_stop))?;
-    Ok(HlsStream::new(queue, stop.clone()))
+    Ok(stream)
 }
 
 /// Follows `playlist` with `downloader` to its end; a failure interrupts
 /// the opening.
-fn download(downloader: &mut Downloader, playlist: &Url, first: Option<Fetched>, sender: &SyncSender<Chunk>, stop: &Stop) {
+fn download(downloader: &mut Downloader, playlist: &Url, first: Option<Fetched>, sender: &Sender, stop: &Stop) {
     let interruption = match downloader.run(playlist, first, sender, stop) {
         Ok(()) => return,
         Err(Failure::Unsupported(error)) => Interruption::Unsupported(error),

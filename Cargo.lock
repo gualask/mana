@@ -1942,6 +1942,7 @@ dependencies = [
  "ctr",
  "fluent-bundle",
  "getrandom 0.2.17",
+ "image",
  "lol_html",
  "md-5",
  "regex",

@@ -8,6 +8,8 @@ use mana_core::language::{Language, Localized};
 use mana_core::session::{Program, STREAM_EXTENSION};
 use mana_core::text;
 
+use mana_core::catalog::logos::room_for_logos;
+
 use super::channel_list::{self, LOGO_SIZE, draw_logo};
 use super::gfx::Renderer;
 use super::hits::Target;
@@ -162,7 +164,7 @@ impl App {
     /// played, or a clip. Asks for the logos of the channels shown.
     fn draw_rows(&mut self, r: &mut Renderer, t: &mut Text, s: f32, language: Language) {
         let channels = self.channels.channels();
-        let with_logos = channels.iter().any(|c| c.logo.is_some());
+        let with_logos = room_for_logos(channels);
         let (first, now) = (self.home_first, clock::now());
         let shown = first..(first + VISIBLE_ROWS).min(self.rows());
         for i in shown.clone() {
@@ -174,8 +176,8 @@ impl App {
                 t.draw(r, 156.0 * s, y + 20.0 * s, 36.0 * s, TEXT, &clip_name(&self.clips[i - channels.len()]));
                 continue;
             };
-            if let Some(logo) = &channel.logo {
-                draw_logo(r, &mut self.logos, logo, 140.0 * s, y + (84.0 - LOGO_SIZE.1) / 2.0 * s, s);
+            if with_logos {
+                draw_logo(r, t, &mut self.logos, channel, 140.0 * s, y + (84.0 - LOGO_SIZE.1) / 2.0 * s, s, language);
             }
             let text_x = if with_logos { 260.0 * s } else { 156.0 * s };
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };

@@ -4,7 +4,9 @@
 //! the one before has released its own (Turn), so the remote never waits
 //! for a request hanging on the network. Only closing the session waits
 //! for the threads. Clients (the TV's remote, the unattended tests, the
-//! desktop app) start, change and stop viewings only through it.
+//! desktop app) start, change, pause and stop viewings only through it. A
+//! live stream cannot wait for the viewer: pausing stops the viewing, and
+//! resuming plays it again from the live point, resolved anew.
 
 mod candidates;
 mod reopen;
@@ -28,6 +30,7 @@ pub use stats::{Failure, State, Stats};
 use stats::Shared;
 
 /// What a viewing plays.
+#[derive(Clone)]
 pub enum Program {
     /// A local file, or a `.stream` file describing a live stream.
     Path(PathBuf),
@@ -51,9 +54,13 @@ pub struct Session {
 
 struct Viewing {
     name: String,
+    /// What it plays, to play again on resuming.
+    program: Program,
+    settings: Settings,
     stop: Arc<AtomicBool>,
     shared: Arc<Shared>,
-    thread: JoinHandle<()>,
+    /// None once paused: its threads are stopping.
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Session {
@@ -72,24 +79,51 @@ impl Session {
         let (open, turn) = (self.open.clone(), self.turn.clone());
         let quality = self.quality.clone();
         log!("playing {name} with {settings:?}, quality {}", quality.get());
+        let (watched, watched_settings) = (program.clone(), settings.clone());
         let thread = std::thread::Builder::new()
             .name("feeder".into())
             .spawn(move || {
                 let in_turn = InTurn::new(turn);
-                watch(&program, &settings, &in_turn.opener(open, &thread_stop), &thread_stop, &thread_shared, &quality);
+                watch(&watched, &watched_settings, &in_turn.opener(open, &thread_stop), &thread_stop, &thread_shared, &quality);
             })
             .map_err(|e| Failure::Thread(e.to_string()))?;
-        self.viewing = Some(Viewing { name, stop, shared, thread });
+        self.viewing = Some(Viewing { name, program, settings, stop, shared, thread: Some(thread) });
         Ok(())
     }
 
     /// Stops the viewing, if any, and returns at once: its threads end on
     /// their own.
     pub fn stop(&mut self) {
+        if let Some(mut viewing) = self.viewing.take() {
+            self.halt(&mut viewing);
+        }
+    }
+
+    /// Pauses the viewing playing, resumes the one paused: from the live
+    /// point, as a live stream cannot wait (a file starts again).
+    pub fn pause_or_resume(&mut self) -> Result<(), Failure> {
+        let Some(mut viewing) = self.viewing.take() else { return Ok(()) };
+        if viewing.thread.is_none() {
+            log!("resuming {}", viewing.name);
+            return self.play(viewing.name, viewing.program, viewing.settings);
+        }
+        self.halt(&mut viewing);
+        log!("paused {}", viewing.name);
+        viewing.shared = Arc::new(Shared::paused());
+        self.viewing = Some(viewing);
+        Ok(())
+    }
+
+    /// Whether the viewing is paused.
+    pub fn is_paused(&self) -> bool {
+        self.viewing.as_ref().is_some_and(|viewing| viewing.thread.is_none())
+    }
+
+    /// Tells the threads of `viewing` to stop, and keeps them until they end.
+    fn halt(&mut self, viewing: &mut Viewing) {
         self.stopping.retain(|thread| !thread.is_finished());
-        let Some(viewing) = self.viewing.take() else { return };
         viewing.stop.store(true, Ordering::Relaxed);
-        self.stopping.push(viewing.thread);
+        self.stopping.extend(viewing.thread.take());
     }
 
     /// Whether the threads of viewings stopped are still running.
@@ -126,6 +160,7 @@ impl Session {
         self.quality.set(quality);
     }
 
+    /// Whether there is a viewing, paused or not.
     pub fn is_playing(&self) -> bool {
         self.viewing.is_some()
     }

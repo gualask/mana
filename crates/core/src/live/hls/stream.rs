@@ -3,8 +3,8 @@
 //! sections, and the stop that ends one opening of a source.
 
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -74,11 +74,73 @@ impl Stop {
     }
 }
 
+/// A queue of at most `chunks` chunks and, past the first, `bytes` bytes
+/// waiting for the demuxer, ended by `stop`: the downloader's side and the
+/// demuxer's.
+pub(super) fn queue(chunks: usize, bytes: usize, stop: Stop) -> (Sender, HlsStream) {
+    let (sender, receiver) = sync_channel(chunks);
+    let queued = Arc::new(AtomicUsize::new(0));
+    let stream = HlsStream {
+        queue: receiver,
+        queued: queued.clone(),
+        current: Vec::new(),
+        position: 0,
+        read_any: false,
+        sequence: 0,
+        next: None,
+        stop: stop.clone(),
+    };
+    (Sender { chunks: sender, queued, max_bytes: bytes, stop }, stream)
+}
+
+/// The downloader's side of the queue.
+pub(super) struct Sender {
+    chunks: SyncSender<Chunk>,
+    /// Bytes sent and not yet taken by the demuxer, shared with it.
+    queued: Arc<AtomicUsize>,
+    max_bytes: usize,
+    stop: Stop,
+}
+
+/// The demuxer is gone, or the opening stopped.
+#[derive(Debug)]
+pub(super) struct Gone;
+
+impl Sender {
+    /// Queues `chunk` once the queue has room for it: a chunk heavier than
+    /// the bound in bytes goes alone, when nothing else waits.
+    pub(super) fn send(&self, chunk: Chunk) -> Result<(), Gone> {
+        if let Chunk::Bytes(bytes) = &chunk {
+            self.wait_for_room(bytes.len())?;
+            self.queued.fetch_add(bytes.len(), Ordering::AcqRel);
+        }
+        self.chunks.send(chunk).map_err(|_| Gone)
+    }
+
+    /// Waits until `len` more bytes fit in the queue, or it holds none.
+    /// Only this thread adds: the room seen stays there.
+    fn wait_for_room(&self, len: usize) -> Result<(), Gone> {
+        loop {
+            let queued = self.queued.load(Ordering::Acquire);
+            if queued == 0 || queued + len <= self.max_bytes {
+                return Ok(());
+            }
+            // The demuxer's side dropped its count with itself.
+            if self.stop.is_set() || Arc::strong_count(&self.queued) == 1 {
+                return Err(Gone);
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+}
+
 /// The demuxer's side of the queue. Reading blocks until a segment arrives;
 /// the end of a section, of the stream or of the downloader reads as end of
 /// file, and `next_section` tells them apart.
 pub struct HlsStream {
     queue: Receiver<Chunk>,
+    /// The bytes in `queue`, which the downloader waits on.
+    queued: Arc<AtomicUsize>,
     current: Vec<u8>,
     position: usize,
     /// Whether any byte was read: a section before that starts the stream.
@@ -90,12 +152,6 @@ pub struct HlsStream {
     /// into the new section.
     next: Option<u64>,
     stop: Stop,
-}
-
-impl HlsStream {
-    pub(super) fn new(queue: Receiver<Chunk>, stop: Stop) -> Self {
-        Self { queue, current: Vec::new(), position: 0, read_any: false, sequence: 0, next: None, stop }
-    }
 }
 
 impl Input for HlsStream {
@@ -115,20 +171,8 @@ impl Input for HlsStream {
 
 impl Read for HlsStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        while self.position == self.current.len() {
-            if self.next.is_some() {
-                return Ok(0);
-            }
-            if self.stop.is_set() {
-                return Err(std::io::Error::other("stopped"));
-            }
-            match self.queue.recv_timeout(POLL) {
-                Ok(Chunk::Bytes(segment)) => (self.current, self.position) = (segment, 0),
-                Ok(Chunk::Section(sequence)) if !self.read_any => self.sequence = sequence,
-                Ok(Chunk::Section(sequence)) => self.next = Some(sequence),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Ok(0),
-            }
+        if !self.wait_for_bytes()? {
+            return Ok(0);
         }
         let count = buf.len().min(self.current.len() - self.position);
         buf[..count].copy_from_slice(&self.current[self.position..self.position + count]);
@@ -138,16 +182,43 @@ impl Read for HlsStream {
     }
 }
 
+impl HlsStream {
+    /// Waits until bytes of the section being read are at hand; false at
+    /// the end of the section or of the stream.
+    fn wait_for_bytes(&mut self) -> std::io::Result<bool> {
+        while self.position == self.current.len() {
+            if self.next.is_some() {
+                return Ok(false);
+            }
+            if self.stop.is_set() {
+                return Err(std::io::Error::other("stopped"));
+            }
+            match self.queue.recv_timeout(POLL) {
+                Ok(Chunk::Bytes(segment)) => {
+                    self.queued.fetch_sub(segment.len(), Ordering::AcqRel);
+                    (self.current, self.position) = (segment, 0);
+                }
+                Ok(Chunk::Section(sequence)) if !self.read_any => self.sequence = sequence,
+                Ok(Chunk::Section(sequence)) => self.next = Some(sequence),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::sync_channel;
-
     use super::*;
+
+    fn stop() -> Stop {
+        Stop::new(&Arc::new(AtomicBool::new(false)))
+    }
 
     #[test]
     fn stream_reads_each_section_to_its_end() {
-        let (sender, queue) = sync_channel(4);
-        let mut stream = HlsStream::new(queue, Stop::new(&Arc::new(AtomicBool::new(false))));
+        let (sender, mut stream) = queue(4, 1024, stop());
         for chunk in [Chunk::Section(7), Chunk::Bytes(b"ab".to_vec()), Chunk::Section(8), Chunk::Bytes(b"cd".to_vec())] {
             sender.send(chunk).unwrap();
         }
@@ -163,5 +234,57 @@ mod tests {
         stream.read_to_end(&mut second).unwrap();
         assert_eq!(second, b"cd");
         assert!(!stream.next_section()); // the end of the stream
+    }
+
+    /// Steps of a downloader sending `chunks`, counted as each is queued.
+    fn send_counting(sender: Sender, chunks: Vec<&'static [u8]>) -> (Arc<AtomicUsize>, std::thread::JoinHandle<bool>) {
+        let sent = Arc::new(AtomicUsize::new(0));
+        let counter = sent.clone();
+        let thread = std::thread::spawn(move || {
+            chunks.into_iter().all(|chunk| {
+                let queued = sender.send(Chunk::Bytes(chunk.to_vec())).is_ok();
+                counter.fetch_add(usize::from(queued), Ordering::SeqCst);
+                queued
+            })
+        });
+        (sent, thread)
+    }
+
+    fn wait_for(sent: &AtomicUsize, count: usize) {
+        while sent.load(Ordering::SeqCst) < count {
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn bytes_past_the_bound_wait_for_the_demuxer() {
+        let (sender, mut stream) = queue(8, 4, stop());
+        // Heavier than the bound, it goes alone; the next one waits for it to be taken.
+        let (sent, thread) = send_counting(sender, vec![b"abcdef", b"gh"]);
+        wait_for(&sent, 1);
+        std::thread::sleep(3 * POLL);
+        assert_eq!(sent.load(Ordering::SeqCst), 1, "the second chunk waits while the first is queued");
+        let mut read = Vec::new();
+        stream.read_to_end(&mut read).unwrap();
+        assert!(thread.join().unwrap());
+        assert_eq!(read, b"abcdefgh");
+    }
+
+    #[test]
+    fn chunks_within_the_bound_queue_together() {
+        let (sender, _stream) = queue(8, 4, stop());
+        let (sent, thread) = send_counting(sender, vec![b"ab", b"cd"]);
+        assert!(thread.join().unwrap());
+        assert_eq!(sent.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_waiting_downloader_ends_when_the_demuxer_is_gone() {
+        let (sender, stream) = queue(8, 4, stop());
+        let (sent, thread) = send_counting(sender, vec![b"abcd", b"ef"]);
+        wait_for(&sent, 1);
+        drop(stream);
+        assert!(!thread.join().unwrap(), "the second chunk is not queued");
+        assert_eq!(sent.load(Ordering::SeqCst), 1);
     }
 }

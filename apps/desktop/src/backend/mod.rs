@@ -17,30 +17,33 @@ use audio::Audio;
 use clock::Clock;
 use video::Video;
 
+pub use audio::Volume;
 pub use video::push;
 
-/// A new backend showing on `surface` for each decoder the feeder loads.
-pub fn open(surface: NativeSurface) -> OpenBackend {
-    Arc::new(move || Ok(Box::new(Desktop::new(surface.clone())) as Box<dyn Backend>))
+/// A new backend showing on `surface` for each decoder the feeder loads,
+/// its audio at `volume`.
+pub fn open(surface: NativeSurface, volume: Volume) -> OpenBackend {
+    Arc::new(move || Ok(Box::new(Desktop::new(surface.clone(), volume.clone())) as Box<dyn Backend>))
 }
 
 struct Desktop {
     surface: NativeSurface,
+    volume: Volume,
     clock: Arc<Clock>,
     video: Option<Video>,
     audio: Option<Audio>,
 }
 
 impl Desktop {
-    fn new(surface: NativeSurface) -> Self {
-        Self { surface, clock: Arc::new(Clock::default()), video: None, audio: None }
+    fn new(surface: NativeSurface, volume: Volume) -> Self {
+        Self { surface, volume, clock: Arc::new(Clock::default()), video: None, audio: None }
     }
 }
 
 impl Backend for Desktop {
     fn load(&mut self, formats: &Formats) -> Result<(), BackendError> {
         self.clock = Arc::new(Clock::new(formats.audio.is_some()));
-        self.audio = match formats.audio.map(|codec| Audio::open(codec, self.clock.clone())) {
+        self.audio = match formats.audio.map(|codec| Audio::open(codec, self.clock.clone(), self.volume.clone())) {
             Some(Ok(audio)) => Some(audio),
             Some(Err(error)) => {
                 log!("audio not played: {error}");
@@ -125,7 +128,7 @@ mod tests {
     #[test]
     fn a_file_plays_through_the_session_at_the_pace_of_its_timestamps() {
         let path = clip(3);
-        let mut session = Session::new(open(NativeSurface::new()));
+        let mut session = Session::new(open(NativeSurface::new(), Volume::default()));
         session.play("clip".into(), Program::Path(path.clone()), Settings::default()).unwrap();
         let presented = |session: &Session| session.stats().and_then(|s| s.playback.presented_ms);
         std::thread::sleep(Duration::from_millis(700));
@@ -143,7 +146,7 @@ mod tests {
     #[test]
     fn a_file_ends_once_its_last_pictures_are_shown_not_at_the_drain_timeout() {
         let path = clip(1);
-        let mut session = Session::new(open(NativeSurface::new()));
+        let mut session = Session::new(open(NativeSurface::new(), Volume::default()));
         let settings = Settings { loop_playback: false, ..Settings::default() };
         let started = Instant::now();
         session.play("clip".into(), Program::Path(path.clone()), settings).unwrap();

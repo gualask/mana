@@ -1,6 +1,7 @@
 //! The levels the list goes through, as on the TV: the channels, a
 //! folder's events, an event's signals; each a list of rows.
 
+use mana_core::catalog::logos::room_for_logos;
 use mana_core::catalog::{Channel, Play};
 use mana_core::clock;
 use mana_core::language::Language;
@@ -23,6 +24,16 @@ pub struct Row {
     pub action: Action,
 }
 
+impl Row {
+    /// The channel of the row, unless it is a signal.
+    pub fn channel(&self) -> Option<&Channel> {
+        match &self.action {
+            Action::Channel(channel) => Some(channel),
+            Action::Signal(_) => None,
+        }
+    }
+}
+
 #[derive(PartialEq)]
 pub enum Kind {
     List,
@@ -37,6 +48,13 @@ pub struct Level {
     pub title: String,
     pub rows: Vec<Row>,
     pub focus: usize,
+}
+
+impl Level {
+    /// Whether its rows leave room for a logo (`room_for_logos`).
+    pub fn with_logos(&self) -> bool {
+        room_for_logos(self.rows.iter().filter_map(Row::channel))
+    }
 }
 
 /// The rows of `channels`, keyed with `prefix`.

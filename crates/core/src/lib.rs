@@ -6,6 +6,7 @@
 mod adts;
 pub mod catalog;
 pub mod clock;
+mod files;
 pub mod language;
 pub mod live;
 pub mod log;

@@ -21,6 +21,8 @@ pub enum State {
     Playing,
     /// Playing out the end of a file.
     Ending,
+    /// Paused by the viewer: stopped until resumed.
+    Paused,
     /// Ended without an error: at its end, or stopped.
     Stopped,
     /// Ended by this error.
@@ -39,6 +41,7 @@ impl Localized for State {
             Self::Starting => text!(language, "state-starting"),
             Self::Playing => text!(language, "state-playing"),
             Self::Ending => text!(language, "state-ending"),
+            Self::Paused => text!(language, "state-paused"),
             Self::Stopped => text!(language, "state-stopped"),
             Self::Failed(failure) => text!(language, "state-failed", failure = failure.text(language)),
         }
@@ -116,6 +119,11 @@ pub(super) struct Shared {
 }
 
 impl Shared {
+    /// Where a viewing paused stands: it plays nothing until resumed.
+    pub fn paused() -> Self {
+        Self { ended: Mutex::new(Some(State::Paused)), ..Self::default() }
+    }
+
     pub fn merge(&self, name: &str, quality: Quality) -> Stats {
         let playback = self.playback.lock().unwrap().clone();
         let state = self.ended.lock().unwrap().clone().unwrap_or(match playback.phase {

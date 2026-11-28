@@ -1,16 +1,16 @@
 //! The window's state: the levels of the list (levels.rs) and what the
 //! keys do with them (keys.rs); what the threads bring, the list, a
-//! folder's events, an event's signals; what plays, through the core's
-//! viewing session; and what the status says.
+//! folder's events, an event's signals, the logos (logos.rs); what plays,
+//! through the core's viewing session; and what the status says.
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mana_core::catalog::Channel;
 use mana_core::catalog::folder::Folders;
 use mana_core::catalog::update::{self, Outcome, Updater};
 use mana_core::language::{Language, Localized};
-use mana_core::session::{Candidates, Program, Session, State as Viewing, chosen_at_once};
+use mana_core::session::{Candidates, Program, Session, chosen_at_once};
 use mana_core::source::Selection;
 use mana_core::text;
 use rune::{NativeSurface, Tx};
@@ -18,17 +18,21 @@ use url::Url;
 
 mod keys;
 mod levels;
+mod logos;
 
-pub use levels::{Action, Kind, Level};
+pub use levels::{Action, Kind, Level, Row};
 use levels::{rows, signal_row};
+use logos::Logos;
 
 use crate::awake::Awake;
-use crate::backend;
+use crate::backend::{self, Volume};
 
 /// How often to look at what the threads brought. The video's pictures wake
 /// the window themselves: since anomalyco/rune#1141 was fixed, every picture
 /// pushed at 50 fps is drawn without the window asking for frames.
 const IDLE: Duration = Duration::from_millis(100);
+/// How long the status says the volume after it changed.
+const VOLUME_SHOWN: Duration = Duration::from_secs(2);
 
 /// What the status says, kept as it happened: it reads in the language of
 /// each frame.
@@ -56,8 +60,12 @@ pub struct App {
     revealed: Option<String>,
     updater: Updater,
     folders: Folders,
+    pub logos: Logos,
     asking: Option<(String, Selection, Candidates)>,
     pub session: Session,
+    pub volume: Volume,
+    /// When the volume last changed.
+    volume_changed: Option<Instant>,
     pub note: Note,
     /// The display kept awake while a video plays.
     awake: Option<Awake>,
@@ -65,7 +73,7 @@ pub struct App {
 
 impl App {
     pub fn new(data: &Path, list: Option<Url>, language: Language) -> Self {
-        let surface = NativeSurface::new();
+        let (surface, volume) = (NativeSurface::new(), Volume::default());
         let (saved, updater) = Updater::start(data, list);
         let rows = saved.as_deref().map(|channels| rows(channels, "l", language)).unwrap_or_default();
         let note = match () {
@@ -74,8 +82,10 @@ impl App {
             _ => Note::None,
         };
         Self {
-            session: Session::new(backend::open(surface.clone())),
+            session: Session::new(backend::open(surface.clone(), volume.clone())),
             surface,
+            volume,
+            volume_changed: None,
             language,
             levels: vec![Level { kind: Kind::List, title: String::new(), rows, focus: 0 }],
             list_open: true,
@@ -83,6 +93,7 @@ impl App {
             revealed: None,
             updater,
             folders: Folders::new(data),
+            logos: Logos::new(data),
             asking: None,
             note,
             awake: None,
@@ -101,8 +112,11 @@ impl App {
     /// Takes what the threads brought and keeps the focused row in view;
     /// whether the window must be drawn again.
     pub fn poll(&mut self, tx: &mut Tx) -> bool {
-        let changed = self.take_list() | self.take_folders() | self.take_signals();
-        let playing = self.session.is_playing();
+        let changed = self.take_list() | self.take_folders() | self.take_signals() | self.logos.take();
+        if self.list_open {
+            self.logos.want(&self.top().rows, self.top().focus);
+        }
+        let playing = self.session.is_playing() && !self.session.is_paused();
         if playing != self.awake.is_some() {
             self.awake = if playing { Awake::hold() } else { None };
         }
@@ -191,9 +205,24 @@ impl App {
         true
     }
 
-    /// The status line: the note, else the viewing's state.
+    /// Raises or lowers the volume a step, or mutes it or not.
+    pub(super) fn change_volume(&mut self, change: impl FnOnce(&Volume)) {
+        change(&self.volume);
+        self.volume_changed = Some(Instant::now());
+    }
+
+    /// Whether the volume changed a moment ago: the status says it.
+    pub fn volume_shown(&self) -> bool {
+        self.volume_changed.is_some_and(|at| at.elapsed() < VOLUME_SHOWN)
+    }
+
+    /// The status line: the volume just changed, else the note, else the
+    /// viewing's state.
     pub fn status(&self) -> Option<String> {
         let language = self.language;
+        if self.volume_shown() {
+            return Some(self.volume_text());
+        }
         Some(match &self.note {
             Note::ListDownloading => text!(language, "home-list-downloading"),
             Note::ListUnavailable(reason) => text!(language, "home-list-unavailable", reason = reason.text(language)),
@@ -204,17 +233,17 @@ impl App {
             Note::SignalsNone(failure) => failure.text(language),
             Note::Unplayable(name, error) => format!("{name}: {}", error.text(language)),
             Note::NotStarted(failure) => failure.text(language),
-            Note::None => {
-                let stats = self.session.stats()?;
-                match &stats.state {
-                    Viewing::Starting => text!(language, "state-starting"),
-                    Viewing::Playing => text!(language, "state-playing"),
-                    Viewing::Ending => text!(language, "state-ending"),
-                    Viewing::Stopped => text!(language, "state-stopped"),
-                    Viewing::Failed(failure) => text!(language, "state-failed", failure = failure.text(language)),
-                }
-            }
+            Note::None => self.session.stats()?.state.text(language),
         })
+    }
+
+    /// The volume as the status says it: muted, or its level.
+    fn volume_text(&self) -> String {
+        if self.volume.muted() {
+            text!(self.language, "desktop-muted")
+        } else {
+            text!(self.language, "desktop-volume", level = self.volume.level())
+        }
     }
 
     /// What plays, by name.

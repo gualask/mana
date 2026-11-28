@@ -15,7 +15,6 @@ path = "src/main.rs"
 mana-core = { path = "../../crates/core" }
 ab_glyph = "0.2.32"
 glow = "0.18.0"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 libloading = "0.9.1"
 qrcodegen = "1.8.0"
 serde_json = "1"
@@ -23,3 +22,6 @@ url = "2"
 
 [build-dependencies]
 cc = "1.11.2"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -65,8 +65,10 @@ ABI changes from one webOS generation to the next.
 
 The TV empties `/tmp` at every power-off; clips and `.stream` files saved in
 `/media/developer/mana/` remain. The folder is created by the app, which runs
-as its own user and saves there the list, the device identifier and the
-language chosen: if it is created
+as its own user and saves there the list, the device identifier, the
+language chosen and, in `logos/`, the thumbnails of the channel logos, each
+downloaded once for its URL and emptied past 16 MB
+([logos.rs](../crates/core/src/catalog/logos.rs)): if it is created
 via SSH as root, it must be made writable (`mkdir -m 777`). If
 `/tmp/mana-autoplay` contains the name of one of these files, or of a
 channel from the [channel list](channel-list.md), the app plays it at start.
@@ -270,6 +272,13 @@ with a URL tried again a few times
 ([HLS live edge cases](hls-cases.md#errors-and-fallback)). Pipeline failures
 and new resolutions are allowed at most 6 times in 5 minutes, then playback
 closes with the error.
+
+Play or Pause on the remote (`AUDIOPLAY` 261 and `PAUSE` 72, what SDL makes
+of Linux's `KEY_PLAY`, `KEY_PLAYPAUSE` and `KEY_PAUSE`; the space bar on the
+desktop build) pauses the viewing: it stops, the information panel says so,
+and the key pressed again plays the channel from the live point, resolved
+anew, as a live stream cannot wait (a clip starts again)
+([session](../crates/core/src/session/mod.rs)). The volume stays the TV's.
 
 During playback the up and down arrows show and hide the information panel,
 which is closed at first and open when viewing starts, until the TV shows

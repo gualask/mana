@@ -107,7 +107,7 @@ The split of the recipes and a synthetic example are described in the
 | `live` | The stream to play at a known URL (`Playable`: a `.stream` file, a channel's URL, a source's resolution), HLS client; reports interruptions without deciding | Stream protocols and formats |
 | `source` | Source files: their contract, the vocabulary of their steps and the checks before use; the engine that runs them, with its limits and outcomes, the network given by the caller | Providers, written as data |
 | `playback` | Demux with FFmpeg, timeline, pacing on the presented frame, silence; `Backend` and `Input` ports | Media formats and each client's decoders |
-| `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; device identifier | List formats and their lifecycle |
+| `catalog` | Channel lists as models for the UI, each channel with the source to play or the reason why it cannot be played; saved copy and update of the list from a URL, with queued downloads and the URL chosen by the user, accepted only if the list is valid TOML; logo thumbnails, downloaded once and kept on disk; device identifier | List formats and their lifecycle |
 | `net` | TLS and roots, timeouts, User-Agent, responses rejected beyond the limit set by the reader (playlists, keys and segments in `live::hls`), URLs without tokens in the log; headers and CA of the single source, with credentials sent only to the origins the source names; maximum length of a value in a request line (`MAX_LINE_VALUE`), for URLs and headers | HTTP transport |
 | `language` | English and Italian: the language in use, from the viewer's choice kept in the data folder, else the TV's locale code, else English; the Fluent catalogs with every text the apps show (`en.ftl`, `it.ftl`, built into the binary) and `text!`, which reads them; `Localized`, which every error shown on a screen implements, each in the module that owns it, its `Display` the English text for the log | Languages of the interface and their texts |
 | `apps/tv` | Composition, screens (their texts in the core's catalogs), SDL, Starfish backend, reading the TV's locale (luna on webOS, `LC_ALL`, `LC_MESSAGES` or `LANG` on the desktop build), settings file, page for the phone, automated trials | Remote control, screens and webOS integration |
@@ -174,21 +174,21 @@ crates/core/                # mana-core: no UI and no platform dependency
     live/                   # playable.rs (a stream to play), hls/ (playlist, openings, downloader, variant choice, progress, stream to the demuxer, segments, AES-128 decryption, packed audio, continuous TS stream, MPEG-TS packets)
     playback/               # ports, demux, reader (demux thread), feeder/ (one opening, feeding, presentation), timeline, silence, ffmpeg/ (wrapper, and the C shim: shim.c with probe.c and mp4.c, transcoder.c for MPEG audio to AAC), fake.rs for the tests
     source/                 # source files: contract and reading (mod.rs), vocabulary (operation.rs, read from the file in operation/read.rs), checks (validate.rs), engine (run/: flows and limits, values and templates, operations, with the formats they read and AES in ops/)
-    catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), folders of the sources' catalogues (folder.rs), search by name (search.rs), device identifier
+    catalog/                # channels, M3U lists, TOML list (list.rs), update and chosen URL (update.rs), copies on disk (update/copies.rs), folders of the sources' catalogues (folder.rs), search by name (search.rs), logo thumbnails kept on disk (logos.rs), device identifier
     language/               # Fluent catalogs (en.ftl, it.ftl) and text! (mod.rs), the viewer's choice and the language in use (choice.rs); tests.rs checks the catalogs against every text! in the workspace
-    net.rs, log.rs, adts.rs, clock.rs (local time of events, with clock.c)
+    net.rs, log.rs, adts.rs, clock.rs (local time of events, with clock.c), files.rs (files of the data folder written whole)
 apps/
   tv/                       # mana-tv, binary `mana`
     build.rs                # cfg(webos), crash.c, linker arguments of the binary
     src/
       main.rs               # composition and event loop
-      screens/              # home screen (home.rs), Settings (setup.rs), language in use (language.rs), arrival of the list (list_updates.rs), playing what is chosen (play.rs), folders open (folders.rs), search (search.rs), signals (signals_menu.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos, pointer zones
+      screens/              # home screen (home.rs), Settings (setup.rs), language in use (language.rs), arrival of the list (list_updates.rs), playing what is chosen (play.rs), folders open (folders.rs), search (search.rs), signals (signals_menu.rs), over the video (video.rs, with the information panel in info.rs and the loading indicator in loader.rs), renderer, text, QR code, channel list, logos in texture slots, pointer zones
       phone/                # page served to the phone while Settings is open: server, minimal HTTP, HTML
       palette.rs            # colours of the screens and of the page
       platform/             # SDL, keys, Magic Remote pointer, TV locale (locale.rs), CPU AES instructions, Starfish backend, data folder
       settings.rs           # mana.conf in the data folder, then /tmp/mana.conf
       autotest.rs           # automatic start, zapping, interface trial; frame statistics in autotest/frames.rs
-  desktop/                  # mana-desktop, alpha: state (app.rs, with levels and keys in app/), drawing (view.rs), backend decoding in software (backend/: video, audio, clock)
+  desktop/                  # mana-desktop, alpha: state (app.rs, with levels, keys and logos in app/), drawing (view.rs), backend decoding in software (backend/: video, audio, clock)
 ```
 
 `session` exists because two clients, the TV and the automated trials, and
@@ -216,7 +216,7 @@ The desktop app will be distributed for macOS, Windows and possibly Linux:
   and libswresample), which only the desktop enables; pictures go to
   `NativeSurface` as NV12 when the clock reaches them, a late one dropped,
   and the audio goes to the system's output through `cpal`, whose samples
-  move the clock. While a video plays the display stays awake, through the
+  move the clock, at the app's own volume (the level cubed, as mpv's goes). While a video plays the display stays awake, through the
   IOKit assertion mpv and VLC take on macOS. The app is a workspace member left out of the
   `default-members`, so that the TV's commands do not build it for ARM.
 - **FFmpeg:** for development, the one from Homebrew or `pkg-config`

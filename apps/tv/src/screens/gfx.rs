@@ -6,56 +6,22 @@
 //! over the rest.
 
 use glow::HasContext;
+use mana_core::catalog::logos::THUMBNAIL;
 
-pub const ATLAS_SIZE: i32 = 1024;
+use atlas::{SOLID_UV, Shelf};
+use shader::{FRAGMENT_SHADER, IMAGE_FRAGMENT_SHADER, program};
+
+pub use atlas::{ATLAS_SIZE, AtlasRect};
+
+mod atlas;
+mod shader;
+
 const FLOATS_PER_VERTEX: usize = 8;
-/// Atlas texel that is always fully opaque; rectangles sample it.
-const SOLID_UV: [f32; 2] = [0.5 / ATLAS_SIZE as f32, 0.5 / ATLAS_SIZE as f32];
 /// RGBA texture for images, 8 MB, cut in slots of IMAGE_SLOT texels.
 const IMAGE_TEXTURE: (i32, i32) = (2048, 1024);
-pub const IMAGE_SLOT: (i32, i32) = (128, 72);
+/// The core's largest logo thumbnail.
+pub const IMAGE_SLOT: (i32, i32) = (THUMBNAIL.0 as i32, THUMBNAIL.1 as i32);
 pub const IMAGE_SLOTS: usize = ((IMAGE_TEXTURE.0 / IMAGE_SLOT.0) * (IMAGE_TEXTURE.1 / IMAGE_SLOT.1)) as usize;
-
-const VERTEX_SHADER: &str = r#"
-attribute vec2 a_pos;
-attribute vec2 a_uv;
-attribute vec4 a_color;
-uniform vec2 u_screen;
-varying vec2 v_uv;
-varying vec4 v_color;
-void main() {
-    vec2 ndc = a_pos / u_screen * 2.0 - 1.0;
-    gl_Position = vec4(ndc.x, -ndc.y, 0.0, 1.0);
-    v_uv = a_uv;
-    v_color = a_color;
-}
-"#;
-
-const FRAGMENT_SHADER: &str = r#"
-#ifdef GL_ES
-precision mediump float;
-#endif
-uniform sampler2D u_atlas;
-varying vec2 v_uv;
-varying vec4 v_color;
-void main() {
-    gl_FragColor = vec4(v_color.rgb, v_color.a * texture2D(u_atlas, v_uv).a);
-}
-"#;
-
-/// Images: the texture's own colours, faded by the vertex alpha.
-const IMAGE_FRAGMENT_SHADER: &str = r#"
-#ifdef GL_ES
-precision mediump float;
-#endif
-uniform sampler2D u_atlas;
-varying vec2 v_uv;
-varying vec4 v_color;
-void main() {
-    vec4 texel = texture2D(u_atlas, v_uv);
-    gl_FragColor = vec4(texel.rgb, texel.a * v_color.a);
-}
-"#;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Color(pub f32, pub f32, pub f32, pub f32);
@@ -75,40 +41,6 @@ impl Color {
     }
 }
 
-/// A region of the atlas in texels.
-#[derive(Debug, Clone, Copy)]
-pub struct AtlasRect {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-}
-
-/// Shelf allocator for the atlas. The first row starts below the solid texel.
-struct Shelf {
-    x: i32,
-    y: i32,
-    row_height: i32,
-}
-
-impl Shelf {
-    fn alloc(&mut self, w: i32, h: i32) -> Option<AtlasRect> {
-        const GAP: i32 = 1;
-        if self.x + w + GAP > ATLAS_SIZE {
-            self.x = 0;
-            self.y += self.row_height + GAP;
-            self.row_height = 0;
-        }
-        if w > ATLAS_SIZE || self.y + h > ATLAS_SIZE {
-            return None;
-        }
-        let rect = AtlasRect { x: self.x, y: self.y, w, h };
-        self.x += w + GAP;
-        self.row_height = self.row_height.max(h);
-        Some(rect)
-    }
-}
-
 pub struct Renderer {
     gl: glow::Context,
     program: glow::Program,
@@ -122,37 +54,6 @@ pub struct Renderer {
     vertices: Vec<f32>,
     image_vertices: Vec<f32>,
     pub size: (f32, f32),
-}
-
-/// Compiles and links the shared vertex shader with `fragment`.
-///
-/// # Safety
-/// The GL context must be current on this thread.
-unsafe fn program(gl: &glow::Context, header: &str, fragment: &str) -> Result<glow::Program, String> {
-    // SAFETY: the caller guarantees a current context.
-    unsafe {
-        let program = gl.create_program()?;
-        for (kind, source) in [(glow::VERTEX_SHADER, VERTEX_SHADER), (glow::FRAGMENT_SHADER, fragment)] {
-            let shader = gl.create_shader(kind)?;
-            gl.shader_source(shader, &format!("{header}{source}"));
-            gl.compile_shader(shader);
-            if !gl.get_shader_compile_status(shader) {
-                return Err(format!("shader: {}", gl.get_shader_info_log(shader)));
-            }
-            gl.attach_shader(program, shader);
-            gl.delete_shader(shader);
-        }
-        for (index, name) in ["a_pos", "a_uv", "a_color"].iter().enumerate() {
-            gl.bind_attrib_location(program, index as u32, name);
-        }
-        gl.link_program(program);
-        if !gl.get_program_link_status(program) {
-            return Err(format!("program: {}", gl.get_program_info_log(program)));
-        }
-        gl.use_program(Some(program));
-        gl.uniform_1_i32(gl.get_uniform_location(program, "u_atlas").as_ref(), 0);
-        Ok(program)
-    }
 }
 
 /// Linear filtering, clamped at the edges, for the bound texture.
@@ -226,7 +127,7 @@ impl Renderer {
                 images,
                 u_screen,
                 u_image_screen,
-                shelf: Shelf { x: 0, y: 3, row_height: 0 },
+                shelf: Shelf::new(),
                 vertices: Vec::with_capacity(4096),
                 image_vertices: Vec::with_capacity(1024),
                 size: (1.0, 1.0),

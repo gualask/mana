@@ -4,13 +4,12 @@
 //! the demuxer starts afresh on it, as at a discontinuity.
 
 use std::io::{Cursor, Read};
-use std::sync::mpsc::{SyncSender, sync_channel};
 use std::time::{Duration, Instant};
 
 use url::Url;
 
 use super::downloader::{Downloader, Failure};
-use super::stream::{Chunk, HlsStream, Stop};
+use super::stream::{self, Chunk, HlsStream, Sender, Stop};
 use super::ts;
 use crate::live::Interruption;
 use crate::log::log;
@@ -55,7 +54,8 @@ pub(super) fn follow(
     first: Option<Body>,
     stop: &Stop,
 ) -> std::io::Result<HlsStream> {
-    let (sender, queue) = sync_channel(QUEUED_CHUNKS);
+    // Bounded in chunks alone, each of at most CHUNK bytes.
+    let (sender, stream) = stream::queue(QUEUED_CHUNKS, usize::MAX, stop.clone());
     let mut downloader = Downloader::new(client.clone(), "ts");
     let thread_stop = stop.clone();
     std::thread::Builder::new()
@@ -69,7 +69,7 @@ pub(super) fn follow(
             log!("ts: {interruption}");
             thread_stop.interrupt(interruption);
         })?;
-    Ok(HlsStream::new(queue, stop.clone()))
+    Ok(stream)
 }
 
 /// Reads one answer after another, each as a section, until stopped or
@@ -78,7 +78,7 @@ fn read(
     downloader: &mut Downloader,
     url: &Url,
     mut first: Option<Body>,
-    sender: &SyncSender<Chunk>,
+    sender: &Sender,
     stop: &Stop,
 ) -> Result<(), Failure> {
     for section in 0.. {
@@ -117,7 +117,7 @@ fn connect(downloader: &mut Downloader, url: &Url, stop: &Stop) -> Result<Option
 /// Hands `body` to the demuxer chunk by chunk, from its program tables on
 /// and after its start margin: why the answer broke off, or None once
 /// stopped or the demuxer is gone.
-fn pass_on(mut body: Body, url: &Url, sender: &SyncSender<Chunk>, stop: &Stop) -> Option<String> {
+fn pass_on(mut body: Body, url: &Url, sender: &Sender, stop: &Stop) -> Option<String> {
     let (mut tables, mut margin) = (TablesFirst::default(), Margin::default());
     while !stop.is_set() {
         let (mut chunk, broken) = match read_up_to(&mut body, CHUNK) {

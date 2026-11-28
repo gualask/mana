@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use mana_core::session::Stats;
+use mana_core::session::{State, Stats};
 
 use super::TEXT;
 use super::gfx::Renderer;
@@ -23,7 +23,7 @@ const DIMMEST: f32 = 0.15;
 /// Whether the viewing waits for its first frame: it did not end, and the
 /// decoder shows nothing yet.
 pub fn waiting(stats: &Stats) -> bool {
-    stats.playback.presented_ms.is_none() && !stats.state.ended()
+    stats.playback.presented_ms.is_none() && !stats.state.ended() && stats.state != State::Paused
 }
 
 /// The loader, `elapsed` after the viewing started, on a surface of

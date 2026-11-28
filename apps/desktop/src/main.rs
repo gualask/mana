@@ -5,7 +5,8 @@
 //!
 //! Keys: Enter opens the list and chooses; Esc over a video shows the list
 //! where it was left, then goes back a level, then hides it; ↑ ↓ move by a
-//! row, ← → by a page.
+//! row, ← → by a page; Space pauses and resumes from the live point, + and −
+//! change the volume, M mutes it.
 
 mod app;
 mod awake;

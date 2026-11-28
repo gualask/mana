@@ -4,6 +4,7 @@
 
 use std::borrow::Cow;
 
+use mana_core::catalog::logos::{self, Placeholder, room_for_logos};
 use mana_core::catalog::{Channel, ChannelError, Play};
 use mana_core::language::{Language, Localized};
 use mana_core::text;
@@ -25,7 +26,7 @@ const GENRES: [&str; 6] = ["News", "Sport", "Cinema", "Music", "Kids", "Document
 
 const LOGO_BOX: Color = Color::hex(0x252b3b);
 /// A logo's box in a row, in 1080p pixels.
-pub const LOGO_SIZE: (f32, f32) = (92.0, 48.0);
+pub const LOGO_SIZE: (f32, f32) = logos::BOX;
 
 pub struct ChannelList {
     channels: Vec<Channel>,
@@ -155,7 +156,7 @@ impl ChannelList {
         r.rect(x, y, w, (VISIBLE_ROWS as f32 * 64.0 + 120.0 + below_height) * s, PANEL.with_alpha(0.85));
         t.draw(r, x + 30.0 * s, y + 24.0 * s, 32.0 * s, MUTED, &self.header(language));
         let (first, now) = (self.first, clock::now());
-        let with_logos = self.channels.iter().any(|c| c.logo.is_some());
+        let with_logos = room_for_logos(&self.channels);
         let text_x = if with_logos { x + 136.0 * s } else { x + 36.0 * s };
         for (i, channel) in self.channels.iter().enumerate().skip(first).take(VISIBLE_ROWS) {
             let top = y + 90.0 * s + (i - first) as f32 * row;
@@ -165,8 +166,8 @@ impl ChannelList {
             if i == self.focus {
                 r.rect(bx, top, bw, bh, FOCUS);
             }
-            if let Some(logo) = &channel.logo {
-                draw_logo(r, logos, logo, x + 28.0 * s, top + 5.0 * s, s);
+            if with_logos {
+                draw_logo(r, t, logos, channel, x + 28.0 * s, top + 5.0 * s, s, language);
             }
             let colour = if channel.play.is_ok() { TEXT } else { MUTED };
             let title_x = match starts(channel, now) {
@@ -210,13 +211,33 @@ impl ChannelList {
     }
 }
 
-/// The logo of `url` in its box at `(x, y)`, or the empty box until it is
-/// loaded.
-pub fn draw_logo(r: &mut Renderer, logos: &mut Logos, url: &str, x: f32, y: f32, s: f32) {
+/// The logo of `channel` in its box at `(x, y)`; while it has none, or it
+/// is not loaded, the box with a folder for a folder, else the channel's
+/// initial, so that every row shows one.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_logo(r: &mut Renderer, t: &mut Text, logos: &mut Logos, channel: &Channel, x: f32, y: f32, s: f32, language: Language) {
     let (w, h) = (LOGO_SIZE.0 * s, LOGO_SIZE.1 * s);
-    if !logos.draw(r, url, x, y, w, h) {
-        r.rect(x, y, w, h, LOGO_BOX);
+    if channel.logo.as_deref().is_some_and(|url| logos.draw(r, url, x, y, w, h)) {
+        return;
     }
+    r.rect(x, y, w, h, LOGO_BOX);
+    match channel.placeholder(language) {
+        Placeholder::Folder => draw_folder(r, x + w / 2.0, y + h / 2.0, s),
+        Placeholder::Initial(initial) => {
+            let px = 28.0 * s;
+            let width = t.width(r, px, &initial);
+            t.draw(r, x + (w - width) / 2.0, y + (h - px) / 2.0, px, MUTED, &initial);
+        }
+    }
+}
+
+/// A folder centred on `(cx, cy)`: its tab, then its body, in 1080p pixels
+/// scaled by `s`.
+fn draw_folder(r: &mut Renderer, cx: f32, cy: f32, s: f32) {
+    let (w, h) = (34.0 * s, 22.0 * s);
+    let (x, y) = (cx - w / 2.0, cy - h / 2.0 + 2.0 * s);
+    r.rect(x, y - 5.0 * s, 14.0 * s, 6.0 * s, MUTED);
+    r.rect(x, y, w, h, MUTED);
 }
 
 /// The name a row shows: the channel's title, with a mark when it is a

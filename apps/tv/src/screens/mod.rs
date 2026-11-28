@@ -141,7 +141,7 @@ impl App {
             setup: None,
             list_failure: None,
             channels_open: false,
-            logos: Logos::new(IMAGE_SLOTS),
+            logos: Logos::new(IMAGE_SLOTS, Path::new(DATA_DIR)),
             quality_menu: None,
             signals: None,
             signals_open: false,
@@ -159,7 +159,7 @@ impl App {
     /// Whether logos are still arriving for the channels shown: the screen
     /// is redrawn often enough to show them, not at every frame.
     pub fn loading_logos(&self) -> bool {
-        (self.channels_open || !self.session.is_playing()) && self.logos.loading()
+        (self.channels_open || !self.session.is_playing()) && self.logos.loader.loading()
     }
 
     pub fn is_playing(&self) -> bool {

@@ -4,7 +4,6 @@
 //! for the opening to be opened again, and the retries every download of a
 //! source goes through.
 
-use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,7 +14,7 @@ use super::ladder::Ladder;
 use super::playlist::{MediaPlaylist, Segment, text};
 use super::progress::{Progress, reload_wait, stuck};
 use super::segment::{self, Segments};
-use super::stream::{Chunk, POLL, Stop};
+use super::stream::{Chunk, POLL, Sender, Stop};
 use crate::live::Interruption;
 use crate::log::{debug, log};
 use crate::net::{self, Client};
@@ -62,7 +61,7 @@ impl Downloader {
         &mut self,
         playlist_url: &Url,
         mut first: Option<Fetched>,
-        sender: &SyncSender<Chunk>,
+        sender: &Sender,
         stop: &Stop,
     ) -> Result<(), Failure> {
         let mut progress = Progress::new();
@@ -112,7 +111,7 @@ impl Downloader {
         playlist: &MediaPlaylist,
         fetched_at: Instant,
         progress: &mut Progress,
-        sender: &SyncSender<Chunk>,
+        sender: &Sender,
         stop: &Stop,
     ) -> Result<Option<Batch>, Failure> {
         let from = progress.start(playlist, fetched_at);
@@ -136,7 +135,7 @@ impl Downloader {
     /// initialization section when they change. The first segment of
     /// another variant starts a section too, its streams demuxed afresh,
     /// with the same discontinuity number: its timestamps go on.
-    fn send(&mut self, segment: &Segment, progress: &mut Progress, sender: &SyncSender<Chunk>, stop: &Stop) -> Result<Sent, Failure> {
+    fn send(&mut self, segment: &Segment, progress: &mut Progress, sender: &Sender, stop: &Stop) -> Result<Sent, Failure> {
         if !self.open_section(segment, progress, sender, stop)? {
             return Ok(Sent::Gone);
         }
@@ -166,7 +165,7 @@ impl Downloader {
     /// Starts a section ahead of `segment` when it starts one, with its
     /// initialization section when it changes or the section is new. False
     /// once the demuxer is gone or the opening stopped.
-    fn open_section(&mut self, segment: &Segment, progress: &mut Progress, sender: &SyncSender<Chunk>, stop: &Stop) -> Result<bool, Failure> {
+    fn open_section(&mut self, segment: &Segment, progress: &mut Progress, sender: &Sender, stop: &Stop) -> Result<bool, Failure> {
         let new_init = segment.init.is_some() && segment.init != progress.sent_init;
         let switched = std::mem::take(&mut progress.switched);
         let new_section = progress.sent_segment && (segment.discontinuity || new_init || switched);
@@ -195,7 +194,7 @@ impl Downloader {
     /// Sends the initialization section `init` ahead of `segment`; `changed`
     /// when it replaces another. False once the demuxer is gone or the
     /// opening stopped.
-    fn send_init(&mut self, init: &Url, changed: bool, segment: &Segment, sender: &SyncSender<Chunk>, stop: &Stop) -> Result<bool, Failure> {
+    fn send_init(&mut self, init: &Url, changed: bool, segment: &Segment, sender: &Sender, stop: &Stop) -> Result<bool, Failure> {
         let Some(data) = self.retry(stop, None, |d| Ok(d.client.get(init, segment::MAX_BYTES)?))? else { return Ok(false) };
         if changed {
             log!("hls: new initialization section at segment {}", segment.sequence);
