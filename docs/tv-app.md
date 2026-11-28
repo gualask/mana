@@ -331,7 +331,10 @@ webOS 6 the following are verified:
   included one, which adds 2.6 MB of libraries;
 - live stream formats: H.264 1080i, AC-3, E-AC-3 5.1 and HE-AAC audio; MPEG
   audio (Layer II, MP3) is converted to AAC by the app because the pipeline
-  does not accept it; MPEG-2 video, by now a rare format, is not supported;
+  does not accept it; MPEG-2 video, by now a rare format left to broadcast retransmissions, is
+  not supported and no longer pursued (28 November): with `BUFFERSTREAM` no
+  Starfish codec name played it, and the B1's `omxmpeg2videodec`, used by
+  the system player, is not reached through libpf;
 - M3U lists with per-channel headers (`#EXTVLCOPT:http-user-agent=`,
   `#EXTVLCOPT:http-referrer=`, `url|User-Agent=…&Referer=…`), sent with every
   request of the channel: of the 19 channels in the Italian iptv-org list

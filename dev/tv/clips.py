@@ -33,8 +33,6 @@ H264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level'
 H264_INTERLACED = H264 + ['-flags', '+ildct+ilme', '-x264-params', 'interlaced=1:tff=1']
 HEVC = ['-c:v', 'libx265', '-preset', 'veryfast', '-tag:v', 'hvc1', '-x265-params', 'log-level=error',
         '-b:v', '5M', '-maxrate', '6M', '-bufsize', '6M']
-MPEG2_SD = ['-c:v', 'mpeg2video', '-b:v', '5M', '-maxrate', '8M', '-bufsize', '1835k',
-            '-flags', '+ilme+ildct', '-field_order', 'tt', '-aspect', '16:9']
 AAC = ['-c:a', 'aac', '-b:a', '128k']
 # The AAC encoder delays audio by 1024 priming samples that MPEG-TS keeps:
 # the beep is generated that much early so it plays with the flash. The other
@@ -54,7 +52,6 @@ VARIANTS = [
     ('format-1080p25-h264-eac3-51', 25, '1920x1080', H264, ['-c:a', 'eac3', '-b:a', '384k', '-ac', '6'], 0),
     ('format-1080p25-h264-heaac', 25, '1920x1080', H264,
      ['-c:a', 'aac_at', '-profile:a', '4', '-b:a', '64k'], 0),
-    ('format-576i25-mpeg2-mp2', 25, '720x576', MPEG2_SD, ['-c:a', 'mp2', '-b:a', '192k'], 0),
 ]
 FLASH_FRAMES = 2
 BEEP_SECONDS = 0.08

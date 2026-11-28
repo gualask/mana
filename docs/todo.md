@@ -15,16 +15,4 @@
 
 ## Open questions
 
-- Reduce the CPU of TLS, of the panel during the live stream and of the handoff to Starfish?
-  - Evidence (21 November): segments are decrypted with the AES instructions when the CPU has them, about 50 times faster than the `aes` crate on the B1; TLS still encrypts with AES on NEON, because ring does not use the AES instructions on 32-bit ARM ([performance](sources/performance.md#tls-and-aes-decryption)).
-  - Evidence (22 November): on Nove, whose CDN picks AES-GCM, TLS is 14% of the app's samples, 0.019 cores ([memory](sources/performance.md#memory)).
-  - Evidence: during the live stream the panel is redrawn 4 times per second even when hidden, and the compositor costs 2% of a core; PlxNative fears that stopping presenting would disturb the video plane ([performance](sources/performance.md#compositor-and-ui-redraw)).
-  - Evidence: the thread that hands frames to Starfish weighs 11–17% of the app, almost all inside Starfish; all the apps examined hand over one frame per call ([performance](sources/performance.md#feeding-data-to-starfish)).
-  - To decide: TLS with AWS-LC, which uses the AES instructions on 32-bit ARM; an A/B test of the panel with screenshots; an experiment with several audio frames per call.
-- Play MPEG-2 video through the B1's hardware decoder?
-  - Evidence (28 November): `gst-inspect-1.0 omx` on the B1 lists `omxmpeg2videodec` ("mtk video omx MPEG2 Video Decoder", rank primary), used by the system player (`com.webos.app.mediadiscovery` → `umediaserver` → `starfish-media-pipeline`, GStreamer 1.16.2); the same list has `omxmp2dec` and `omxmp3dec` for the MPEG audio that the app converts to AAC.
-  - Evidence (16 November): with `BUFFERSTREAM` no Starfish video codec name played MPEG-2: `MPEG2` and `MPEG1` unload the pipeline, `MPEG` and `MPEG2VIDEO` give audio only ([TV app](tv-app.md), formats list).
-  - To decide: the name or the caps that make libpf's `CustomPipeline` create `omxmpeg2videodec` (libpf's codec table, the system player's pipeline for an MPEG-2 file); when a source with MPEG-2 video is played.
-- Keep cookies between playlists and segments?
-  - Evidence (19 November): webos-native-app-kit reports providers that set a cookie on the playlist and require it on the segments; the app's client (ureq without the cookies feature) does not keep them; no source tested so far requires them.
-  - To decide: a source that answers 403 to segments without the cookie received with the playlist; reference: [net.rs](../crates/core/src/net.rs).
+None for now.

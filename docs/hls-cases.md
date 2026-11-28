@@ -33,6 +33,7 @@ Abbreviations: **H** = hls.js `src/`, **M** = Media3
 |---|---|---|
 | Segment retries | M `DefaultLoadErrorHandlingPolicy` (increasing wait, then error); H `fragLoadPolicy` (4xx responses are not retried, `utils/error-helper.ts`) | Handled: 3 attempts, then the segment is skipped, which suits a TV better |
 | Slow download | H `maxTimeToFirstByteMs`, `maxLoadTimeMs` | To add, low: there is only the read timeout |
+| Cookies set by the playlist and asked for by the segments | FFmpeg `hls.c` passes on the cookies of each answer (`update_options`, `cookies`); H leaves them to the browser; M keeps none unless the app installs a cookie handler | Out of scope (decided on 28 November): the client does not keep cookies (ureq without the `cookies` feature). webos-native-app-kit reports providers that need them; none of the sources tried so far does |
 | Bytes downloaded ahead | H `maxBufferSize` (60 MB); M `DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE` (125 MiB of video); FFmpeg `hls.c` reads each segment as it goes | Handled: at most 3 segments wait for the demuxer, and past the first at most 48 MB ([download.rs](../crates/core/src/live/hls/download.rs)). A 4K channel's 10 s segments, 31 MB at 25 Mbit/s, wait one at a time: with the one being read and the one downloading, about 93 MB instead of 155; those of Rai 1 and Nove (3–6 MB) never reach the bound |
 | Key cache | M LRU of 4 (`HlsChunkSource`) | To add, low: the cache grows without limit |
 | Encrypted `EXT-X-MAP`, several `EXT-X-KEY` per segment | M `HlsMediaPlaylistParserTest` | To add, low |

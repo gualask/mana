@@ -3,6 +3,15 @@
 Consulted on 20 November 2026. Verification grades as in the [index](README.md).
 The B1 measurements of our process are in [ARM CPU](cpu-arm.md#checks-on-the-b1).
 
+Lowering the CPU further is left aside (decided on 28 November 2026): during
+a live stream the whole app takes 0.10–0.13 of the B1's four cores, TLS 0.019
+cores on Nove, the compositor 2% of a core and the thread feeding Starfish
+11–17% of the app, almost all inside Starfish. TLS with AWS-LC would add a
+large C dependency to the ARM build, stopping the panel's redraw may disturb
+the video plane (PlxNative), and several audio frames per call would change
+the most delicate step of playback, each for about a hundredth of a core.
+The sections below hold the measurements, should a weaker TV need them.
+
 ## Compositor and UI redraw
 
 - On the B1 the `surface-manager` compositor uses 0% of a core with the app
